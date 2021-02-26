@@ -12,35 +12,50 @@ use std::fmt::Write;
 use std::io::stdout;
 
 fn main() {
-    let day_entry = DayEntry::new();
-    let checkin_date = day_entry.datetime;
-    let checkin_time = day_entry.stamp_events[0].timestamp();
+    let day_entry = DayEntry::load();
 
+    let checkin_date = day_entry.datetime;
+    let checkin_time = day_entry.first_checkin_time();
+
+    println!(
+        "Hello! Today is {}\n",
+        checkin_date.format("%A %e. %b (%d.%m.%Y)"),
+    );
+
+    println!("Stamp pairs:");
+    for pair in day_entry.get_stamp_pairs() {
+        println!("{}", pair.to_string(),);
+    }
+    println!("");
+
+    println!("You started at {}", checkin_time.to_string());
+    match day_entry.get_last_check_event() {
+        StampEvent::CheckIn(timestamp) => {
+            println!("You are working since {}", timestamp.to_string());
+        }
+        StampEvent::CheckOut(timestamp) => {
+            println!("You are idle since {}", timestamp.to_string());
+        }
+    }
+    println!("=======================================");
     let work_duration = day_entry.get_work_duration();
     let (break_duration_confirmed, duration_since_last_checkout) =
         day_entry.get_break_duration_and_duration_since_last_checkout();
+
     println!(
-        "Hello! Today is {} - you started at {}",
-        checkin_date.format("%A %e. %b (%d.%m.%Y)"),
-        checkin_time.to_string()
-    );
-    println!(
-        "Work duration:            {} ({}h)",
-        work_duration.to_string(),
-        work_duration.to_string_hour_fraction()
+        "Total work duration:      {}",
+        work_duration.to_string_composite(),
     );
 
     println!(
-        "Break duration:           {} ({}h)",
-        break_duration_confirmed.to_string(),
-        break_duration_confirmed.to_string_hour_fraction(),
+        "Total break duration:     {}",
+        break_duration_confirmed.to_string_composite(),
     );
 
     if duration_since_last_checkout.minutes != 0 {
         println!(
-            "Time since last checkout: {} ({}h)",
-            duration_since_last_checkout.to_string(),
-            duration_since_last_checkout.to_string_hour_fraction(),
+            "Time since last checkout: {}",
+            duration_since_last_checkout.to_string_composite(),
         );
     }
 
@@ -88,7 +103,7 @@ struct DayEntry {
 }
 
 impl DayEntry {
-    pub fn new() -> DayEntry {
+    pub fn load() -> DayEntry {
         let datetime_today = Local::now();
         let filepath_today = DayEntry::filepath_for_date(datetime_today);
 
@@ -96,11 +111,17 @@ impl DayEntry {
             let content = std::fs::read_to_string(&filepath_today)
                 .unwrap_or_else(|error| panic!("Could not read '{}' - {}", &filepath_today, error));
 
-            let stamp_events = content
+            let stamp_events: Vec<StampEvent> = content
                 .lines()
                 .filter(|line| !line.is_empty())
                 .map(|line| StampEvent::from_string(line))
                 .collect();
+
+            assert!(
+                !stamp_events.is_empty(),
+                "No stamp events found in '{}'",
+                filepath_today,
+            );
 
             DayEntry {
                 stamp_events,
@@ -131,6 +152,83 @@ impl DayEntry {
             .unwrap_or_else(|error| panic!("Could not write to '{}' - {}", &filepath, error));
     }
 
+    fn is_working(&self) -> bool {
+        match self.stamp_events.last().unwrap() {
+            StampEvent::CheckIn(_) => true,
+            StampEvent::CheckOut(_) => false,
+        }
+    }
+
+    fn get_last_check_event(&self) -> StampEvent {
+        for event in self.stamp_events.iter().rev() {
+            match event {
+                StampEvent::CheckIn(_) | StampEvent::CheckOut(_) => {}
+                _ => continue,
+            }
+            return event.clone();
+        }
+        unreachable!()
+    }
+
+    fn first_checkin_time(&self) -> TimeStamp {
+        self.stamp_events[0].timestamp()
+    }
+
+    fn get_stamp_pairs(&self) -> Vec<StampPair> {
+        let mut stamp_pairs = Vec::new();
+        let mut current_pair: Option<StampPair> = None;
+        for event in self.stamp_events.iter() {
+            match event {
+                StampEvent::CheckIn(timestamp) => {
+                    if current_pair.is_some() {
+                        match current_pair.as_ref().unwrap().stamp_type {
+                            PairType::Idle => {}
+                            PairType::Work => {
+                                panic!("Got a duplicate checkin at {}", timestamp.to_string())
+                            }
+                        }
+                        current_pair.as_mut().unwrap().time_pair.end = Some(*timestamp);
+                        stamp_pairs.push(current_pair.take().unwrap());
+                    }
+
+                    // Start new work pair
+                    current_pair = Some(StampPair {
+                        stamp_type: PairType::Work,
+                        time_pair: TimePair {
+                            start: *timestamp,
+                            end: None,
+                        },
+                    });
+                }
+                StampEvent::CheckOut(timestamp) => {
+                    if current_pair.is_some() {
+                        match current_pair.as_ref().unwrap().stamp_type {
+                            PairType::Work => {}
+                            PairType::Idle => {
+                                panic!("Got a duplicate checkout at {}", timestamp.to_string())
+                            }
+                        }
+                        current_pair.as_mut().unwrap().time_pair.end = Some(*timestamp);
+                        stamp_pairs.push(current_pair.take().unwrap());
+                    }
+
+                    // Start new idle pair
+                    current_pair = Some(StampPair {
+                        stamp_type: PairType::Idle,
+                        time_pair: TimePair {
+                            start: *timestamp,
+                            end: None,
+                        },
+                    });
+                }
+            }
+        }
+        if let Some(current_pair) = current_pair {
+            stamp_pairs.push(current_pair);
+        }
+        stamp_pairs
+    }
+
     fn get_work_duration(&self) -> TimeDuration {
         let mut last_checkin_stamp = None;
         let mut duration_checked_in = TimeDuration::zero();
@@ -159,6 +257,46 @@ impl DayEntry {
             duration_checked_in += Local::now().to_timestamp() - last_checkin_stamp;
         }
         duration_checked_in
+    }
+
+    fn get_work_pairs(&self) -> Vec<TimePair> {
+        let mut timepairs = Vec::new();
+        let mut current_pair = None;
+        for event in self.stamp_events.iter() {
+            match event {
+                StampEvent::CheckIn(timestamp) => {
+                    assert!(
+                        current_pair.is_none(),
+                        "Got a duplicate checkin at {}",
+                        timestamp.to_string()
+                    );
+                    current_pair = Some(TimePair {
+                        start: *timestamp,
+                        end: None,
+                    });
+                }
+                StampEvent::CheckOut(timestamp) => {
+                    assert!(
+                        current_pair.is_some(),
+                        "Got a checkout at {} without checkin",
+                        timestamp.to_string()
+                    );
+                    assert!(
+                        current_pair.as_ref().unwrap().start < *timestamp,
+                        "Got a checkout at {} that is earlier than previous checkin at {}",
+                        timestamp.to_string(),
+                        current_pair.as_ref().unwrap().start.to_string(),
+                    );
+                    current_pair.as_mut().unwrap().end = Some(*timestamp);
+                    timepairs.push(current_pair.take().unwrap());
+                    current_pair = None;
+                }
+            }
+        }
+        if let Some(current_pair) = current_pair {
+            timepairs.push(current_pair);
+        }
+        timepairs
     }
 
     fn get_break_duration_and_duration_since_last_checkout(&self) -> (TimeDuration, TimeDuration) {
@@ -207,6 +345,39 @@ impl DateTimeHelper for DateTime<Local> {
 
     fn to_timestamp(&self) -> TimeStamp {
         TimeStamp::new(self.hour(), self.minute())
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum PairType {
+    Idle,
+    Work,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct StampPair {
+    pub stamp_type: PairType,
+    pub time_pair: TimePair,
+}
+
+impl StampPair {
+    pub fn to_string(&self) -> String {
+        match self.stamp_type {
+            PairType::Idle => {
+                format!(
+                    "{} [{}] - break",
+                    self.time_pair.to_string(),
+                    self.time_pair.duration().to_string_composite()
+                )
+            }
+            PairType::Work => {
+                format!(
+                    "{} [{}] - work",
+                    self.time_pair.to_string(),
+                    self.time_pair.duration().to_string_composite()
+                )
+            }
+        }
     }
 }
 
@@ -326,6 +497,29 @@ impl Date {
 }
 
 #[derive(Debug, Copy, Clone)]
+pub struct TimePair {
+    pub start: TimeStamp,
+    pub end: Option<TimeStamp>,
+}
+impl TimePair {
+    pub fn to_string(&self) -> String {
+        if let Some(end) = self.end {
+            format!("{} - {}", self.start.to_string(), end.to_string())
+        } else {
+            format!("{} - {}", self.start.to_string(), "[now]")
+        }
+    }
+
+    pub fn duration(&self) -> TimeDuration {
+        if let Some(end) = self.end {
+            end - self.start
+        } else {
+            Local::now().to_timestamp() - self.start
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TimeStamp {
     pub hours: u32,
     pub minutes: u32,
@@ -421,6 +615,10 @@ impl TimeDuration {
             if self.minutes < 0 { "-" } else { "" },
             self.minutes.abs() as f32 / 60.0
         )
+    }
+
+    pub fn to_string_composite(&self) -> String {
+        format!("{} ({}h)", self.to_string(), self.to_string_hour_fraction())
     }
 }
 
