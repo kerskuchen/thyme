@@ -1,0 +1,17 @@
+[package]
+name = "launcher"
+version = "0.1.0"
+authors = ["Jakob Schwab <j.schwab@mail.de>"]
+edition = "2018"
+default-run = "launcher"
+
+[[bin]]
+path = "src/main_launcher.rs"
+name = "launcher"
+
+[dependencies]
+ct_lib_core = { path = "../cottontail/ct_lib_core"}
+
+crossterm = "0.19.0"
+chrono = "0.4.19"
+
