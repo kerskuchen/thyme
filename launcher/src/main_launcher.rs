@@ -2,99 +2,114 @@
 extern crate crossterm;
 
 use chrono::{prelude::*, Local};
-use crossterm::cursor::{self, EnableBlinking};
 use crossterm::event::{read, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::style::Print;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
-use ct_lib_core::{path_exists, path_without_filename};
+use crossterm::{
+    cursor::{self, EnableBlinking},
+    ExecutableCommand,
+};
+use ct_lib_core::{path_exists, path_without_filename, serde::de::value::StringDeserializer};
 
 use std::fmt::Write;
 use std::io::stdout;
 
-fn main() {
-    let day_entry = DayEntry::load();
+fn main() -> crossterm::Result<()> {
+    let mut day_entry = DayEntry::load();
 
+    let mut stdout = std::io::stdout();
+    crossterm::terminal::enable_raw_mode()?;
+
+    let mut is_running = true;
+    while is_running {
+        match crossterm::event::read()? {
+            crossterm::event::Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::NONE,
+            }) => {
+                if day_entry.is_working() {
+                    day_entry.check_out();
+                } else {
+                    day_entry.check_in();
+                }
+            }
+            crossterm::event::Event::Key(KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+            }) => is_running = false,
+            _ => (),
+        }
+
+        let main_screen: String = create_main_screen(&day_entry);
+        stdout
+            .execute(Clear(ClearType::All))?
+            .execute(cursor::MoveTo(0, 0))?
+            .execute(Print(&main_screen))?;
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    crossterm::terminal::disable_raw_mode()?;
+
+    Ok(())
+}
+
+fn create_main_screen(day_entry: &DayEntry) -> String {
+    let mut result = String::new();
     let checkin_date = day_entry.datetime;
     let checkin_time = day_entry.first_checkin_time();
 
-    println!(
+    writeln!(
+        result,
         "Hello! Today is {}\n",
         checkin_date.format("%A %e. %b (%d.%m.%Y)"),
-    );
+    )
+    .unwrap();
 
-    println!("Stamp pairs:");
-    for pair in day_entry.get_stamp_pairs() {
-        println!("{}", pair.to_string(),);
+    writeln!(result, "Time pairs:").unwrap();
+    for pair in day_entry.get_time_pairs() {
+        writeln!(result, "{}", pair.to_string()).unwrap();
     }
-    println!("");
+    writeln!(result, "").unwrap();
 
-    println!("You started at {}", checkin_time.to_string());
+    writeln!(result, "You started at {}", checkin_time.to_string()).unwrap();
     match day_entry.get_last_check_event() {
         StampEvent::CheckIn(timestamp) => {
-            println!("You are working since {}", timestamp.to_string());
+            writeln!(result, "You are working since {}", timestamp.to_string()).unwrap();
         }
         StampEvent::CheckOut(timestamp) => {
-            println!("You are idle since {}", timestamp.to_string());
+            writeln!(result, "You are on break since {}", timestamp.to_string()).unwrap();
         }
     }
-    println!("=======================================");
+    writeln!(result, "=======================================").unwrap();
     let work_duration = day_entry.get_work_duration();
-    let (break_duration_confirmed, duration_since_last_checkout) =
-        day_entry.get_break_duration_and_duration_since_last_checkout();
+    let break_duration = day_entry.get_break_duration();
+    let duration_since_last_checkout = day_entry.get_duration_since_last_leave();
 
-    println!(
+    writeln!(
+        result,
         "Total work duration:      {}",
         work_duration.to_string_composite(),
-    );
+    )
+    .unwrap();
 
-    println!(
+    writeln!(
+        result,
         "Total break duration:     {}",
-        break_duration_confirmed.to_string_composite(),
-    );
+        break_duration.to_string_composite(),
+    )
+    .unwrap();
 
-    if duration_since_last_checkout.minutes != 0 {
-        println!(
+    if let Some(duration_since_last_checkout) = duration_since_last_checkout {
+        writeln!(
+            result,
             "Time since last checkout: {}",
             duration_since_last_checkout.to_string_composite(),
-        );
+        )
+        .unwrap();
     }
 
-    return;
-
-    let mut stdout = stdout();
-    //going into raw mode
-    enable_raw_mode().unwrap();
-
-    //clearing the screen, going to top left corner and printing welcoming message
-    execute!(stdout, Clear(ClearType::All), cursor::MoveTo(0, 0), Print(r#"ctrl + q to exit, ctrl + h to print "Hello world", alt + t to print "crossterm is cool""#))
-            .unwrap();
-
-    //key detection
-    loop {
-        //going to top left corner
-        execute!(stdout, cursor::MoveTo(0, 0)).unwrap();
-
-        //matching the key
-        match read().unwrap() {
-            crossterm::event::Event::Key(KeyEvent {
-                code: KeyCode::Char('h'),
-                modifiers: KeyModifiers::CONTROL,
-                //clearing the screen and printing our message
-            }) => execute!(stdout, Clear(ClearType::All), Print("Hello world!")).unwrap(),
-            crossterm::event::Event::Key(KeyEvent {
-                code: KeyCode::Char('t'),
-                modifiers: KeyModifiers::ALT,
-            }) => execute!(stdout, Clear(ClearType::All), Print("crossterm is cool")).unwrap(),
-            crossterm::event::Event::Key(KeyEvent {
-                code: KeyCode::Char('q'),
-                modifiers: KeyModifiers::CONTROL,
-            }) => break,
-            _ => (),
-        }
-    }
-
-    //disabling raw mode
-    disable_raw_mode().unwrap();
+    result
 }
 
 struct DayEntry {
@@ -105,7 +120,7 @@ struct DayEntry {
 impl DayEntry {
     pub fn load() -> DayEntry {
         let datetime_today = Local::now();
-        let filepath_today = DayEntry::filepath_for_date(datetime_today);
+        let filepath_today = DayEntry::database_filepath_for_date(datetime_today);
 
         if path_exists(&filepath_today) {
             let content = std::fs::read_to_string(&filepath_today)
@@ -138,7 +153,7 @@ impl DayEntry {
     }
 
     fn write_back(&self) {
-        let filepath = DayEntry::filepath_for_date(self.datetime);
+        let filepath = DayEntry::database_filepath_for_date(self.datetime);
         let mut output = String::new();
         for stamp_event in &self.stamp_events {
             writeln!(output, "{}", stamp_event.to_string()).unwrap();
@@ -150,6 +165,107 @@ impl DayEntry {
         }
         std::fs::write(&filepath, &output)
             .unwrap_or_else(|error| panic!("Could not write to '{}' - {}", &filepath, error));
+
+        self.write_report();
+    }
+
+    fn write_report(&self) {
+        let report = self.generate_report();
+
+        let report_filepath = DayEntry::report_filepath_for_date(self.datetime);
+        std::fs::write(&report_filepath, &report).unwrap_or_else(|error| {
+            panic!("Could not write to '{}' - {}", &report_filepath, error)
+        });
+        let report_filepath_default = DayEntry::report_filepath_default(self.datetime);
+        std::fs::write(&report_filepath_default, &report).unwrap_or_else(|error| {
+            panic!("Could not write to '{}' - {}", &report_filepath, error)
+        });
+    }
+
+    fn generate_report(&self) -> String {
+        let mut result = String::new();
+        let checkin_date = self.datetime;
+        let checkin_time = self.first_checkin_time();
+
+        writeln!(
+            result,
+            "Report for {}\n",
+            checkin_date.format("%A %e. %b (%d.%m.%Y)"),
+        )
+        .unwrap();
+
+        writeln!(result, "Time pairs:").unwrap();
+        for pair in self.get_time_pairs() {
+            writeln!(result, "{}", pair.to_string()).unwrap();
+        }
+        writeln!(result, "").unwrap();
+
+        writeln!(result, "You started at {}", checkin_time.to_string()).unwrap();
+        match self.get_last_check_event() {
+            StampEvent::CheckIn(timestamp) => {
+                writeln!(result, "You are working since {}", timestamp.to_string()).unwrap();
+            }
+            StampEvent::CheckOut(timestamp) => {
+                writeln!(result, "You are on break since {}", timestamp.to_string()).unwrap();
+            }
+        }
+        writeln!(result, "=======================================").unwrap();
+        let work_duration = self.get_work_duration();
+        let break_duration = self.get_break_duration();
+        let duration_since_last_checkout = self.get_duration_since_last_leave();
+
+        writeln!(
+            result,
+            "Total work duration:      {}",
+            work_duration.to_string_composite(),
+        )
+        .unwrap();
+
+        writeln!(
+            result,
+            "Total break duration:     {}",
+            break_duration.to_string_composite(),
+        )
+        .unwrap();
+
+        if let Some(duration_since_last_checkout) = duration_since_last_checkout {
+            writeln!(
+                result,
+                "Time since last checkout: {}",
+                duration_since_last_checkout.to_string_composite(),
+            )
+            .unwrap();
+        }
+
+        result
+    }
+
+    fn check_in(&mut self) {
+        assert!(
+            !self.is_working(),
+            "Trying to check in while already being checked in"
+        );
+        let datetime_today = Local::now();
+        self.stamp_events
+            .push(StampEvent::CheckIn(datetime_today.to_timestamp()));
+        self.remove_zero_sized_pairs();
+        self.write_back();
+    }
+
+    fn check_out(&mut self) {
+        assert!(
+            self.is_working(),
+            "Trying to check out while already being checked out"
+        );
+        let datetime_today = Local::now();
+        self.stamp_events
+            .push(StampEvent::CheckOut(datetime_today.to_timestamp()));
+        self.remove_zero_sized_pairs();
+        self.write_back();
+    }
+
+    fn remove_zero_sized_pairs(&mut self) {
+        todo!();
     }
 
     fn is_working(&self) -> bool {
@@ -174,51 +290,47 @@ impl DayEntry {
         self.stamp_events[0].timestamp()
     }
 
-    fn get_stamp_pairs(&self) -> Vec<StampPair> {
+    fn get_time_pairs(&self) -> Vec<TimePair> {
         let mut stamp_pairs = Vec::new();
-        let mut current_pair: Option<StampPair> = None;
+        let mut current_pair: Option<TimePair> = None;
         for event in self.stamp_events.iter() {
             match event {
                 StampEvent::CheckIn(timestamp) => {
                     if current_pair.is_some() {
                         match current_pair.as_ref().unwrap().stamp_type {
-                            PairType::Idle => {}
+                            PairType::Break => {}
                             PairType::Work => {
                                 panic!("Got a duplicate checkin at {}", timestamp.to_string())
                             }
                         }
-                        current_pair.as_mut().unwrap().time_pair.end = Some(*timestamp);
+                        current_pair.as_mut().unwrap().end = Some(*timestamp);
                         stamp_pairs.push(current_pair.take().unwrap());
                     }
 
                     // Start new work pair
-                    current_pair = Some(StampPair {
+                    current_pair = Some(TimePair {
                         stamp_type: PairType::Work,
-                        time_pair: TimePair {
-                            start: *timestamp,
-                            end: None,
-                        },
+                        start: *timestamp,
+                        end: None,
                     });
                 }
                 StampEvent::CheckOut(timestamp) => {
                     if current_pair.is_some() {
                         match current_pair.as_ref().unwrap().stamp_type {
                             PairType::Work => {}
-                            PairType::Idle => {
+                            PairType::Break => {
                                 panic!("Got a duplicate checkout at {}", timestamp.to_string())
                             }
                         }
-                        current_pair.as_mut().unwrap().time_pair.end = Some(*timestamp);
+                        current_pair.as_mut().unwrap().end = Some(*timestamp);
                         stamp_pairs.push(current_pair.take().unwrap());
                     }
 
                     // Start new idle pair
-                    current_pair = Some(StampPair {
-                        stamp_type: PairType::Idle,
-                        time_pair: TimePair {
-                            start: *timestamp,
-                            end: None,
-                        },
+                    current_pair = Some(TimePair {
+                        stamp_type: PairType::Break,
+                        start: *timestamp,
+                        end: None,
                     });
                 }
             }
@@ -230,106 +342,43 @@ impl DayEntry {
     }
 
     fn get_work_duration(&self) -> TimeDuration {
-        let mut last_checkin_stamp = None;
-        let mut duration_checked_in = TimeDuration::zero();
-        for event in self.stamp_events.iter() {
-            match event {
-                StampEvent::CheckIn(timestamp) => {
-                    assert!(
-                        last_checkin_stamp.is_none(),
-                        "Got a duplicate checkin at {}",
-                        timestamp.to_string()
-                    );
-                    last_checkin_stamp = Some(timestamp);
-                }
-                StampEvent::CheckOut(timestamp) => {
-                    assert!(
-                        last_checkin_stamp.is_some(),
-                        "Got a checkout at {} without checkin",
-                        timestamp.to_string()
-                    );
-                    duration_checked_in += *timestamp - *last_checkin_stamp.unwrap();
-                    last_checkin_stamp = None;
-                }
-            }
-        }
-        if let Some(&last_checkin_stamp) = last_checkin_stamp {
-            duration_checked_in += Local::now().to_timestamp() - last_checkin_stamp;
-        }
-        duration_checked_in
+        let stamp_pairs = self.get_time_pairs();
+        stamp_pairs
+            .iter()
+            .filter(|pair| pair.is_work())
+            .fold(TimeDuration::zero(), |acc, pair| acc + pair.duration())
     }
 
-    fn get_work_pairs(&self) -> Vec<TimePair> {
-        let mut timepairs = Vec::new();
-        let mut current_pair = None;
-        for event in self.stamp_events.iter() {
-            match event {
-                StampEvent::CheckIn(timestamp) => {
-                    assert!(
-                        current_pair.is_none(),
-                        "Got a duplicate checkin at {}",
-                        timestamp.to_string()
-                    );
-                    current_pair = Some(TimePair {
-                        start: *timestamp,
-                        end: None,
-                    });
-                }
-                StampEvent::CheckOut(timestamp) => {
-                    assert!(
-                        current_pair.is_some(),
-                        "Got a checkout at {} without checkin",
-                        timestamp.to_string()
-                    );
-                    assert!(
-                        current_pair.as_ref().unwrap().start < *timestamp,
-                        "Got a checkout at {} that is earlier than previous checkin at {}",
-                        timestamp.to_string(),
-                        current_pair.as_ref().unwrap().start.to_string(),
-                    );
-                    current_pair.as_mut().unwrap().end = Some(*timestamp);
-                    timepairs.push(current_pair.take().unwrap());
-                    current_pair = None;
-                }
-            }
-        }
-        if let Some(current_pair) = current_pair {
-            timepairs.push(current_pair);
-        }
-        timepairs
+    fn get_break_duration(&self) -> TimeDuration {
+        let stamp_pairs = self.get_time_pairs();
+        stamp_pairs
+            .iter()
+            .filter(|pair| !pair.is_work())
+            .filter(|pair| pair.end.is_some())
+            .fold(TimeDuration::zero(), |acc, pair| acc + pair.duration())
     }
 
-    fn get_break_duration_and_duration_since_last_checkout(&self) -> (TimeDuration, TimeDuration) {
-        let mut last_checkout_stamp: Option<TimeStamp> = None;
-        let mut duration_checked_out = TimeDuration::zero();
-        for event in self.stamp_events.iter() {
-            match event {
-                StampEvent::CheckIn(timestamp) => {
-                    if last_checkout_stamp.is_none() {
-                        continue;
-                    }
-                    duration_checked_out += *timestamp - last_checkout_stamp.unwrap();
-                    last_checkout_stamp = None;
-                }
-                StampEvent::CheckOut(timestamp) => {
-                    assert!(
-                        last_checkout_stamp.is_none(),
-                        "Got a duplicate checkout at {}",
-                        timestamp.to_string()
-                    );
-                    last_checkout_stamp = Some(*timestamp);
-                }
-            }
+    fn get_duration_since_last_leave(&self) -> Option<TimeDuration> {
+        let stamp_pairs = self.get_time_pairs();
+        let last_pair = stamp_pairs.last().unwrap();
+        if !last_pair.is_work() && last_pair.end.is_none() {
+            Some(last_pair.duration())
+        } else {
+            None
         }
-        let mut duration_since_last_checkout = TimeDuration::zero();
-        if let Some(last_checkout_stamp) = last_checkout_stamp {
-            duration_since_last_checkout += Local::now().to_timestamp() - last_checkout_stamp;
-        }
-        (duration_checked_out, duration_since_last_checkout)
     }
 
-    fn filepath_for_date(datetime: DateTime<Local>) -> String {
+    fn database_filepath_for_date(datetime: DateTime<Local>) -> String {
         format!("database/{}.txt", datetime.format("%Y_%m_%d__%b_%A"))
+    }
+    fn report_filepath_for_date(datetime: DateTime<Local>) -> String {
+        format!(
+            "database/{}__report.txt",
+            datetime.format("%Y_%m_%d__%b_%A")
+        )
+    }
+    fn report_filepath_default(datetime: DateTime<Local>) -> String {
+        "today__report.txt".to_owned()
     }
 }
 
@@ -350,33 +399,57 @@ impl DateTimeHelper for DateTime<Local> {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PairType {
-    Idle,
+    Break,
     Work,
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct StampPair {
+pub struct TimePair {
     pub stamp_type: PairType,
-    pub time_pair: TimePair,
+    pub start: TimeStamp,
+    pub end: Option<TimeStamp>,
 }
 
-impl StampPair {
+impl TimePair {
+    pub fn is_work(&self) -> bool {
+        match self.stamp_type {
+            PairType::Break => false,
+            PairType::Work => true,
+        }
+    }
     pub fn to_string(&self) -> String {
         match self.stamp_type {
-            PairType::Idle => {
+            PairType::Break => {
                 format!(
-                    "{} [{}] - break",
-                    self.time_pair.to_string(),
-                    self.time_pair.duration().to_string_composite()
+                    "{} [{}] - {}",
+                    self.to_string_time_range(),
+                    self.duration().to_string_composite(),
+                    if self.end.is_some() { "break" } else { "leave" }
                 )
             }
             PairType::Work => {
                 format!(
                     "{} [{}] - work",
-                    self.time_pair.to_string(),
-                    self.time_pair.duration().to_string_composite()
+                    self.to_string_time_range(),
+                    self.duration().to_string_composite()
                 )
             }
+        }
+    }
+
+    pub fn to_string_time_range(&self) -> String {
+        if let Some(end) = self.end {
+            format!("{} - {}", self.start.to_string(), end.to_string())
+        } else {
+            format!("{} - {}", self.start.to_string(), "[now]")
+        }
+    }
+
+    pub fn duration(&self) -> TimeDuration {
+        if let Some(end) = self.end {
+            end - self.start
+        } else {
+            Local::now().to_timestamp() - self.start
         }
     }
 }
@@ -493,29 +566,6 @@ impl Date {
             }
         }
         panic!("The string '{}' is not a valid date", input)
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct TimePair {
-    pub start: TimeStamp,
-    pub end: Option<TimeStamp>,
-}
-impl TimePair {
-    pub fn to_string(&self) -> String {
-        if let Some(end) = self.end {
-            format!("{} - {}", self.start.to_string(), end.to_string())
-        } else {
-            format!("{} - {}", self.start.to_string(), "[now]")
-        }
-    }
-
-    pub fn duration(&self) -> TimeDuration {
-        if let Some(end) = self.end {
-            end - self.start
-        } else {
-            Local::now().to_timestamp() - self.start
-        }
     }
 }
 
