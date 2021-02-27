@@ -1,60 +1,115 @@
 use chrono::{prelude::*, Local};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use crossterm::style::Print;
-use crossterm::terminal::{Clear, ClearType};
 use crossterm::{
     cursor::{self},
+    event::{KeyCode, KeyEvent, KeyModifiers},
+    style::Print,
+    terminal::{DisableLineWrap, EnableLineWrap, SetTitle},
     ExecutableCommand,
 };
+
 use ct_lib_core::{path_exists, path_without_filename};
 
-use std::fmt::Write;
+use std::{collections::HashSet, fmt::Write};
 
 fn main() -> crossterm::Result<()> {
-    let mut day_entry = DayEntry::load();
+    let mut day_entry = DayEntry::load_or_create();
 
     let mut stdout = std::io::stdout();
     crossterm::terminal::enable_raw_mode()?;
+    stdout.execute(DisableLineWrap)?;
+
+    let mut previous_time = Local::now().to_timestamp();
 
     let mut is_running = true;
     while is_running {
-        let main_screen: String = create_main_screen(&day_entry);
-        stdout
-            .execute(Clear(ClearType::All))?
-            .execute(cursor::MoveTo(0, 0))?
-            .execute(Print(&main_screen))?;
-
-        match crossterm::event::read()? {
-            crossterm::event::Event::Key(KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::NONE,
-            }) => {
-                if day_entry.is_currently_working() {
-                    day_entry.start_activitiy(ACTIVITY_NAME_LEAVE, false);
-                } else {
-                    day_entry.start_activitiy(ACTIVITY_NAME_WORK_NONSPECIFIC, true);
-                }
-            }
-            crossterm::event::Event::Key(KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::CONTROL,
-            })
-            | crossterm::event::Event::Key(KeyEvent {
-                code: KeyCode::Esc,
-                modifiers: KeyModifiers::NONE,
-            }) => is_running = false,
-            _ => (),
+        // Write changes every minute
+        let current_time = Local::now().to_timestamp();
+        if (current_time - previous_time).minutes > 0 {
+            // One minute has passed
+            day_entry.write_back();
+            previous_time = current_time;
+        } else if (current_time - previous_time).minutes < 0 {
+            // A whole day has passed - we need to create a new entry
+            day_entry = DayEntry::create_empty();
+            previous_time = current_time;
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        let (terminal_width, terminal_height) = crossterm::terminal::size().unwrap_or((100, 30));
+        let terminal_width = (terminal_width - 2) as usize;
+        let terminal_height = (terminal_height.min(30) - 2) as usize;
+
+        let clear_screen = create_clear_screen(terminal_width, terminal_height);
+        let main_screen = create_main_screen(&day_entry, terminal_width, terminal_height);
+
+        stdout
+            .execute(cursor::MoveTo(0, 0))?
+            //.execute(Clear(ClearType::All))? // This just scrolls down on Windows and looks glitchy
+            .execute(Print(&clear_screen))?
+            .execute(cursor::MoveTo(0, 0))?
+            .execute(Print(&main_screen))?
+            .execute(cursor::MoveTo(0, 0))?;
+
+        let current_activity = day_entry.get_current_activity();
+        let title = format!(
+            "{} - {}",
+            current_activity.duration().to_string(),
+            if current_activity.is_work {
+                "Working"
+            } else {
+                "Break"
+            },
+        );
+
+        stdout.execute(SetTitle(&title))?;
+
+        // Using `poll` for non-blocking read
+        if crossterm::event::poll(std::time::Duration::from_millis(1000))? {
+            match crossterm::event::read()? {
+                crossterm::event::Event::Key(KeyEvent {
+                    code: KeyCode::Char('c'),
+                    modifiers: KeyModifiers::NONE,
+                }) => {
+                    if day_entry.is_currently_working() {
+                        day_entry.start_activitiy(ACTIVITY_NAME_LEAVE, false);
+                    } else {
+                        day_entry.start_activitiy(ACTIVITY_NAME_WORK_NONSPECIFIC, true);
+                    }
+                }
+                crossterm::event::Event::Key(KeyEvent {
+                    code: KeyCode::Char('c'),
+                    modifiers: KeyModifiers::CONTROL,
+                })
+                | crossterm::event::Event::Key(KeyEvent {
+                    code: KeyCode::Esc,
+                    modifiers: KeyModifiers::NONE,
+                }) => is_running = false,
+                _ => (),
+            }
+        }
     }
 
+    stdout.execute(EnableLineWrap)?;
     crossterm::terminal::disable_raw_mode()?;
 
     Ok(())
 }
 
-fn create_main_screen(day_entry: &DayEntry) -> String {
+fn create_clear_screen(terminal_width: usize, terminal_heigth: usize) -> String {
+    let mut result = String::new();
+    for _line_index in 0..terminal_heigth {
+        for _col_index in 0..terminal_width {
+            write!(result, " ").unwrap();
+        }
+        writeln!(result, "").unwrap();
+    }
+    result
+}
+
+fn create_main_screen(
+    day_entry: &DayEntry,
+    terminal_width: usize,
+    terminal_heigth: usize,
+) -> String {
     let mut result = String::new();
     let checkin_date = day_entry.datetime;
     let checkin_time = day_entry.first_checkin_time();
@@ -77,15 +132,17 @@ fn create_main_screen(day_entry: &DayEntry) -> String {
     if current_activity.is_work {
         writeln!(
             result,
-            "You are working since {}",
-            current_activity.time_start.to_string()
+            "You are working since {} [{}]",
+            current_activity.time_start.to_string(),
+            current_activity.duration().to_string_composite(),
         )
         .unwrap();
     } else {
         writeln!(
             result,
-            "You are on break since {}",
-            current_activity.time_start.to_string()
+            "You are on break since {} [{}]",
+            current_activity.time_start.to_string(),
+            current_activity.duration().to_string_composite(),
         )
         .unwrap();
     }
@@ -131,7 +188,17 @@ struct DayEntry {
 }
 
 impl DayEntry {
-    pub fn load() -> DayEntry {
+    pub fn create_empty() -> DayEntry {
+        let datetime_today = Local::now();
+        let result = DayEntry {
+            activities: vec![],
+            datetime: datetime_today,
+        };
+        result.write_back();
+        result
+    }
+
+    pub fn load_or_create() -> DayEntry {
         let datetime_today = Local::now();
         let filepath_today = DayEntry::database_filepath_for_date(datetime_today);
 
@@ -206,7 +273,6 @@ impl DayEntry {
     fn generate_report(&self) -> String {
         let mut result = String::new();
         let checkin_date = self.datetime;
-        let checkin_time = self.first_checkin_time();
 
         writeln!(
             result,
@@ -215,57 +281,58 @@ impl DayEntry {
         )
         .unwrap();
 
-        writeln!(result, "Activities:").unwrap();
+        writeln!(result, "\nActivity Durations:").unwrap();
+        writeln!(result, "=====================\n").unwrap();
+
+        let activity_names: HashSet<String> = self
+            .activities
+            .iter()
+            .filter(|activity| activity.is_work)
+            .map(|activity| activity.name.clone())
+            .collect();
+
+        for activity_name in activity_names {
+            let duration = self
+                .activities
+                .iter()
+                .filter(|activity| activity.name == activity_name)
+                .fold(TimeDuration::zero(), |acc, activity| {
+                    acc + activity.duration()
+                });
+
+            writeln!(
+                result,
+                "{} - {}",
+                duration.to_string_composite(),
+                activity_name
+            )
+            .unwrap();
+        }
+
+        // Totals summary
+        writeln!(result, "\n-------------\n").unwrap();
+
+        writeln!(
+            result,
+            "{} - Total work duration",
+            self.get_work_duration().to_string_composite(),
+        )
+        .unwrap();
+
+        writeln!(
+            result,
+            "{} - Total break duration",
+            self.get_break_duration().to_string_composite(),
+        )
+        .unwrap();
+
+        // Activity list
+        writeln!(result, "\nDetailed Activity List:").unwrap();
+        writeln!(result, "=========================\n").unwrap();
         for activity in self.activities.iter() {
             writeln!(result, "{}", activity.to_string()).unwrap();
         }
         writeln!(result, "").unwrap();
-
-        writeln!(result, "You started at {}", checkin_time.to_string()).unwrap();
-        let current_activity = self.get_current_activity();
-        if current_activity.is_work {
-            writeln!(
-                result,
-                "You are working since {}",
-                current_activity.time_start.to_string()
-            )
-            .unwrap();
-        } else {
-            writeln!(
-                result,
-                "You are on break since {}",
-                current_activity.time_start.to_string()
-            )
-            .unwrap();
-        }
-
-        writeln!(result, "=======================================").unwrap();
-        let work_duration = self.get_work_duration();
-        let break_duration = self.get_break_duration();
-        let duration_since_last_checkout = self.get_duration_since_last_leave();
-
-        writeln!(
-            result,
-            "Total work duration:      {}",
-            work_duration.to_string_composite(),
-        )
-        .unwrap();
-
-        writeln!(
-            result,
-            "Total break duration:     {}",
-            break_duration.to_string_composite(),
-        )
-        .unwrap();
-
-        if let Some(duration_since_last_checkout) = duration_since_last_checkout {
-            writeln!(
-                result,
-                "Time since last checkout: {}",
-                duration_since_last_checkout.to_string_composite(),
-            )
-            .unwrap();
-        }
 
         result
     }
