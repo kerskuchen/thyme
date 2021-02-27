@@ -1,18 +1,14 @@
-#[macro_use]
-extern crate crossterm;
-
 use chrono::{prelude::*, Local};
-use crossterm::event::{read, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::style::Print;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
+use crossterm::terminal::{Clear, ClearType};
 use crossterm::{
-    cursor::{self, EnableBlinking},
+    cursor::{self},
     ExecutableCommand,
 };
-use ct_lib_core::{path_exists, path_without_filename, serde::de::value::StringDeserializer};
+use ct_lib_core::{path_exists, path_without_filename};
 
 use std::fmt::Write;
-use std::io::stdout;
 
 fn main() -> crossterm::Result<()> {
     let mut day_entry = DayEntry::load();
@@ -22,29 +18,33 @@ fn main() -> crossterm::Result<()> {
 
     let mut is_running = true;
     while is_running {
-        match crossterm::event::read()? {
-            crossterm::event::Event::Key(KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::NONE,
-            }) => {
-                if day_entry.is_working() {
-                    day_entry.check_out();
-                } else {
-                    day_entry.check_in();
-                }
-            }
-            crossterm::event::Event::Key(KeyEvent {
-                code: KeyCode::Esc,
-                modifiers: KeyModifiers::NONE,
-            }) => is_running = false,
-            _ => (),
-        }
-
         let main_screen: String = create_main_screen(&day_entry);
         stdout
             .execute(Clear(ClearType::All))?
             .execute(cursor::MoveTo(0, 0))?
             .execute(Print(&main_screen))?;
+
+        match crossterm::event::read()? {
+            crossterm::event::Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::NONE,
+            }) => {
+                if day_entry.is_currently_working() {
+                    day_entry.start_activitiy(ACTIVITY_NAME_LEAVE, false);
+                } else {
+                    day_entry.start_activitiy(ACTIVITY_NAME_WORK_NONSPECIFIC, true);
+                }
+            }
+            crossterm::event::Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
+            })
+            | crossterm::event::Event::Key(KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+            }) => is_running = false,
+            _ => (),
+        }
 
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
@@ -66,21 +66,30 @@ fn create_main_screen(day_entry: &DayEntry) -> String {
     )
     .unwrap();
 
-    writeln!(result, "Time pairs:").unwrap();
-    for pair in day_entry.get_time_pairs() {
-        writeln!(result, "{}", pair.to_string()).unwrap();
+    writeln!(result, "Activities:").unwrap();
+    for activity in day_entry.activities.iter() {
+        writeln!(result, "{}", activity.to_string()).unwrap();
     }
     writeln!(result, "").unwrap();
 
     writeln!(result, "You started at {}", checkin_time.to_string()).unwrap();
-    match day_entry.get_last_check_event() {
-        StampEvent::CheckIn(timestamp) => {
-            writeln!(result, "You are working since {}", timestamp.to_string()).unwrap();
-        }
-        StampEvent::CheckOut(timestamp) => {
-            writeln!(result, "You are on break since {}", timestamp.to_string()).unwrap();
-        }
+    let current_activity = day_entry.get_current_activity();
+    if current_activity.is_work {
+        writeln!(
+            result,
+            "You are working since {}",
+            current_activity.time_start.to_string()
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            result,
+            "You are on break since {}",
+            current_activity.time_start.to_string()
+        )
+        .unwrap();
     }
+
     writeln!(result, "=======================================").unwrap();
     let work_duration = day_entry.get_work_duration();
     let break_duration = day_entry.get_break_duration();
@@ -112,9 +121,13 @@ fn create_main_screen(day_entry: &DayEntry) -> String {
     result
 }
 
+const ACTIVITY_NAME_WORK_NONSPECIFIC: &str = "Work (non-specific)";
+const ACTIVITY_NAME_LEAVE: &str = "Leave";
+const ACTIVITY_NAME_BREAK: &str = "Break";
+
 struct DayEntry {
-    pub stamp_events: Vec<StampEvent>,
     pub datetime: DateTime<Local>,
+    pub activities: Vec<Activity>,
 }
 
 impl DayEntry {
@@ -138,13 +151,19 @@ impl DayEntry {
                 filepath_today,
             );
 
+            let activities = DayEntry::create_activities_from_stamp_events(&stamp_events);
             DayEntry {
-                stamp_events,
                 datetime: datetime_today,
+                activities,
             }
         } else {
             let result = DayEntry {
-                stamp_events: vec![StampEvent::CheckIn(datetime_today.to_timestamp())],
+                activities: vec![Activity {
+                    is_work: true,
+                    name: ACTIVITY_NAME_WORK_NONSPECIFIC.to_owned(),
+                    time_start: datetime_today.to_timestamp(),
+                    time_end: None,
+                }],
                 datetime: datetime_today,
             };
             result.write_back();
@@ -155,7 +174,9 @@ impl DayEntry {
     fn write_back(&self) {
         let filepath = DayEntry::database_filepath_for_date(self.datetime);
         let mut output = String::new();
-        for stamp_event in &self.stamp_events {
+
+        let stamp_events = DayEntry::create_stamp_events_from_activities(&self.activities);
+        for stamp_event in &stamp_events {
             writeln!(output, "{}", stamp_event.to_string()).unwrap();
         }
 
@@ -176,7 +197,7 @@ impl DayEntry {
         std::fs::write(&report_filepath, &report).unwrap_or_else(|error| {
             panic!("Could not write to '{}' - {}", &report_filepath, error)
         });
-        let report_filepath_default = DayEntry::report_filepath_default(self.datetime);
+        let report_filepath_default = DayEntry::report_filepath_default();
         std::fs::write(&report_filepath_default, &report).unwrap_or_else(|error| {
             panic!("Could not write to '{}' - {}", &report_filepath, error)
         });
@@ -194,21 +215,30 @@ impl DayEntry {
         )
         .unwrap();
 
-        writeln!(result, "Time pairs:").unwrap();
-        for pair in self.get_time_pairs() {
-            writeln!(result, "{}", pair.to_string()).unwrap();
+        writeln!(result, "Activities:").unwrap();
+        for activity in self.activities.iter() {
+            writeln!(result, "{}", activity.to_string()).unwrap();
         }
         writeln!(result, "").unwrap();
 
         writeln!(result, "You started at {}", checkin_time.to_string()).unwrap();
-        match self.get_last_check_event() {
-            StampEvent::CheckIn(timestamp) => {
-                writeln!(result, "You are working since {}", timestamp.to_string()).unwrap();
-            }
-            StampEvent::CheckOut(timestamp) => {
-                writeln!(result, "You are on break since {}", timestamp.to_string()).unwrap();
-            }
+        let current_activity = self.get_current_activity();
+        if current_activity.is_work {
+            writeln!(
+                result,
+                "You are working since {}",
+                current_activity.time_start.to_string()
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                result,
+                "You are on break since {}",
+                current_activity.time_start.to_string()
+            )
+            .unwrap();
         }
+
         writeln!(result, "=======================================").unwrap();
         let work_duration = self.get_work_duration();
         let break_duration = self.get_break_duration();
@@ -240,132 +270,231 @@ impl DayEntry {
         result
     }
 
-    fn check_in(&mut self) {
-        assert!(
-            !self.is_working(),
-            "Trying to check in while already being checked in"
-        );
-        let datetime_today = Local::now();
-        self.stamp_events
-            .push(StampEvent::CheckIn(datetime_today.to_timestamp()));
-        self.remove_zero_sized_pairs();
-        self.write_back();
-    }
+    fn start_activitiy(&mut self, name: &str, is_work: bool) {
+        let timestamp_now = Local::now().to_timestamp();
 
-    fn check_out(&mut self) {
-        assert!(
-            self.is_working(),
-            "Trying to check out while already being checked out"
-        );
-        let datetime_today = Local::now();
-        self.stamp_events
-            .push(StampEvent::CheckOut(datetime_today.to_timestamp()));
-        self.remove_zero_sized_pairs();
-        self.write_back();
-    }
-
-    fn remove_zero_sized_pairs(&mut self) {
-        todo!();
-    }
-
-    fn is_working(&self) -> bool {
-        match self.stamp_events.last().unwrap() {
-            StampEvent::CheckIn(_) => true,
-            StampEvent::CheckOut(_) => false,
-        }
-    }
-
-    fn get_last_check_event(&self) -> StampEvent {
-        for event in self.stamp_events.iter().rev() {
-            match event {
-                StampEvent::CheckIn(_) | StampEvent::CheckOut(_) => {}
-                _ => continue,
+        // Close previous activity
+        {
+            let current = self.get_current_activity_mut();
+            if current.name == name {
+                debug_assert!(false, "Trying to start same activity '{}' twice", name);
+                return;
             }
-            return event.clone();
+            assert!(current.time_end.is_none());
+            current.time_end = Some(timestamp_now);
         }
-        unreachable!()
+
+        // Start new activity
+        self.activities.push(Activity {
+            is_work,
+            name: name.to_owned(),
+            time_start: timestamp_now,
+            time_end: None,
+        });
+
+        DayEntry::cleanup_activities(&mut self.activities);
+        self.write_back();
+    }
+
+    fn is_currently_working(&self) -> bool {
+        self.get_current_activity().is_work
+    }
+
+    fn get_current_activity(&self) -> &Activity {
+        self.activities.last().unwrap()
+    }
+
+    fn get_current_activity_mut(&mut self) -> &mut Activity {
+        self.activities.last_mut().unwrap()
     }
 
     fn first_checkin_time(&self) -> TimeStamp {
-        self.stamp_events[0].timestamp()
+        self.activities.first().unwrap().time_start
     }
 
-    fn get_time_pairs(&self) -> Vec<TimePair> {
-        let mut stamp_pairs = Vec::new();
-        let mut current_pair: Option<TimePair> = None;
-        for event in self.stamp_events.iter() {
+    fn get_work_duration(&self) -> TimeDuration {
+        self.activities
+            .iter()
+            .filter(|activity| activity.is_work)
+            .fold(TimeDuration::zero(), |acc, activity| {
+                acc + activity.duration()
+            })
+    }
+
+    fn get_break_duration(&self) -> TimeDuration {
+        self.activities
+            .iter()
+            .filter(|activity| !activity.is_work)
+            .filter(|activity| activity.time_end.is_some())
+            .fold(TimeDuration::zero(), |acc, activity| {
+                acc + activity.duration()
+            })
+    }
+
+    fn get_duration_since_last_leave(&self) -> Option<TimeDuration> {
+        let current_activity = self.get_current_activity();
+        if current_activity.name == ACTIVITY_NAME_LEAVE {
+            assert!(!current_activity.is_work && current_activity.time_end.is_none());
+            Some(current_activity.duration())
+        } else {
+            None
+        }
+    }
+
+    fn create_activities_from_stamp_events(stamp_events: &[StampEvent]) -> Vec<Activity> {
+        let mut result = Vec::new();
+        let mut current_activity: Option<Activity> = None;
+        for event in stamp_events.iter() {
             match event {
-                StampEvent::CheckIn(timestamp) => {
-                    if current_pair.is_some() {
-                        match current_pair.as_ref().unwrap().stamp_type {
-                            PairType::Break => {}
-                            PairType::Work => {
-                                panic!("Got a duplicate checkin at {}", timestamp.to_string())
-                            }
+                StampEvent::Begin(timestamp, activity_name) => {
+                    // Close current activity
+                    if current_activity.is_some() {
+                        if current_activity.as_ref().unwrap().name == *activity_name {
+                            panic!(
+                                "Got a duplicate activity '{}' at {}",
+                                activity_name,
+                                timestamp.to_string()
+                            )
                         }
-                        current_pair.as_mut().unwrap().end = Some(*timestamp);
-                        stamp_pairs.push(current_pair.take().unwrap());
+                        current_activity.as_mut().unwrap().time_end = Some(*timestamp);
+                        result.push(current_activity.take().unwrap());
                     }
 
-                    // Start new work pair
-                    current_pair = Some(TimePair {
-                        stamp_type: PairType::Work,
-                        start: *timestamp,
-                        end: None,
+                    // Start new activity
+                    current_activity = Some(Activity {
+                        is_work: true,
+                        name: activity_name.to_owned(),
+                        time_start: *timestamp,
+                        time_end: None,
                     });
                 }
-                StampEvent::CheckOut(timestamp) => {
-                    if current_pair.is_some() {
-                        match current_pair.as_ref().unwrap().stamp_type {
-                            PairType::Work => {}
-                            PairType::Break => {
-                                panic!("Got a duplicate checkout at {}", timestamp.to_string())
-                            }
+                StampEvent::Leave(timestamp) => {
+                    // Close current activity
+                    if current_activity.is_some() {
+                        if !current_activity.as_ref().unwrap().is_work {
+                            panic!(
+                                "Got a duplicate leave activity at {}",
+                                timestamp.to_string()
+                            )
                         }
-                        current_pair.as_mut().unwrap().end = Some(*timestamp);
-                        stamp_pairs.push(current_pair.take().unwrap());
+                        current_activity.as_mut().unwrap().time_end = Some(*timestamp);
+                        result.push(current_activity.take().unwrap());
                     }
 
-                    // Start new idle pair
-                    current_pair = Some(TimePair {
-                        stamp_type: PairType::Break,
-                        start: *timestamp,
-                        end: None,
+                    // Start new activity
+                    current_activity = Some(Activity {
+                        is_work: false,
+                        name: ACTIVITY_NAME_LEAVE.to_owned(),
+                        time_start: *timestamp,
+                        time_end: None,
                     });
                 }
             }
         }
-        if let Some(current_pair) = current_pair {
-            stamp_pairs.push(current_pair);
+        if let Some(current_activity) = current_activity {
+            result.push(current_activity);
         }
-        stamp_pairs
+
+        DayEntry::cleanup_activities(&mut result);
+        result
     }
 
-    fn get_work_duration(&self) -> TimeDuration {
-        let stamp_pairs = self.get_time_pairs();
-        stamp_pairs
-            .iter()
-            .filter(|pair| pair.is_work())
-            .fold(TimeDuration::zero(), |acc, pair| acc + pair.duration())
-    }
-
-    fn get_break_duration(&self) -> TimeDuration {
-        let stamp_pairs = self.get_time_pairs();
-        stamp_pairs
-            .iter()
-            .filter(|pair| !pair.is_work())
-            .filter(|pair| pair.end.is_some())
-            .fold(TimeDuration::zero(), |acc, pair| acc + pair.duration())
-    }
-
-    fn get_duration_since_last_leave(&self) -> Option<TimeDuration> {
-        let stamp_pairs = self.get_time_pairs();
-        let last_pair = stamp_pairs.last().unwrap();
-        if !last_pair.is_work() && last_pair.end.is_none() {
-            Some(last_pair.duration())
-        } else {
-            None
+    fn create_stamp_events_from_activities(activities: &[Activity]) -> Vec<StampEvent> {
+        let mut result = Vec::new();
+        for activity in activities.iter() {
+            if activity.is_work {
+                result.push(StampEvent::Begin(
+                    activity.time_start,
+                    activity.name.clone(),
+                ));
+            } else {
+                result.push(StampEvent::Leave(activity.time_start));
+            }
         }
+        result
+    }
+
+    fn cleanup_activities(activities: &mut Vec<Activity>) {
+        // let mut debug = String::new();
+        // writeln!(debug, "before");
+        // for a in activities.iter() {
+        //     writeln!(debug, "{}", a.to_string());
+        // }
+
+        // Remove zero sized activities
+        activities
+            .retain(|activity| activity.time_end.is_none() || activity.duration().minutes != 0);
+
+        // writeln!(debug, "after remove zeroes");
+        // for a in activities.iter() {
+        //     writeln!(debug, "{}", a.to_string());
+        // }
+        // std::fs::write("debug.txt", &debug);
+
+        // Rename all "leave" activities to "leave" so the next merge operation is easier
+        for activity in activities.iter_mut() {
+            if activity.is_work {
+                continue;
+            }
+            activity.name = ACTIVITY_NAME_LEAVE.to_owned();
+        }
+
+        // writeln!(debug, "after rename");
+        // for a in activities.iter() {
+        //     writeln!(debug, "{}", a.to_string());
+        // }
+        // std::fs::write("debug.txt", &debug);
+
+        // Merge adjacent same activities
+        // NOTE: These can occur after the previous removal operation
+        let mut result = Vec::new();
+        let mut current_activity: Option<Activity> = None;
+        for activity in activities.drain(..) {
+            if current_activity.is_none() {
+                current_activity = Some(activity);
+                continue;
+            }
+
+            // Merge if necessary
+            if let Some(current_activity) = current_activity.as_mut() {
+                if current_activity.is_work == activity.is_work
+                    && current_activity.name == activity.name
+                {
+                    current_activity.time_end = activity.time_end;
+                    continue;
+                }
+            }
+
+            result.push(current_activity.take().unwrap());
+            current_activity = Some(activity);
+        }
+        if let Some(current_activity) = current_activity {
+            result.push(current_activity);
+        }
+
+        *activities = result;
+
+        // writeln!(debug, "after merge");
+        // for a in activities.iter() {
+        //     writeln!(debug, "{}", a.to_string());
+        // }
+        // std::fs::write("debug.txt", &debug);
+
+        // Rename "leave" activities to "break" is the have a confirmed end
+        for activity in activities.iter_mut() {
+            if activity.is_work {
+                continue;
+            }
+            if activity.time_end.is_some() {
+                activity.name = ACTIVITY_NAME_BREAK.to_owned();
+            }
+        }
+
+        // writeln!(debug, "after rename");
+        // for a in activities.iter() {
+        //     writeln!(debug, "{}", a.to_string());
+        // }
+        // std::fs::write("debug.txt", &debug);
     }
 
     fn database_filepath_for_date(datetime: DateTime<Local>) -> String {
@@ -377,7 +506,7 @@ impl DayEntry {
             datetime.format("%Y_%m_%d__%b_%A")
         )
     }
-    fn report_filepath_default(datetime: DateTime<Local>) -> String {
+    fn report_filepath_default() -> String {
         "today__report.txt".to_owned()
     }
 }
@@ -397,102 +526,79 @@ impl DateTimeHelper for DateTime<Local> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum PairType {
-    Break,
-    Work,
+#[derive(Debug, Clone)]
+pub struct Activity {
+    pub is_work: bool,
+    pub name: String,
+    pub time_start: TimeStamp,
+    pub time_end: Option<TimeStamp>,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct TimePair {
-    pub stamp_type: PairType,
-    pub start: TimeStamp,
-    pub end: Option<TimeStamp>,
-}
-
-impl TimePair {
-    pub fn is_work(&self) -> bool {
-        match self.stamp_type {
-            PairType::Break => false,
-            PairType::Work => true,
-        }
-    }
+impl Activity {
     pub fn to_string(&self) -> String {
-        match self.stamp_type {
-            PairType::Break => {
-                format!(
-                    "{} [{}] - {}",
-                    self.to_string_time_range(),
-                    self.duration().to_string_composite(),
-                    if self.end.is_some() { "break" } else { "leave" }
-                )
-            }
-            PairType::Work => {
-                format!(
-                    "{} [{}] - work",
-                    self.to_string_time_range(),
-                    self.duration().to_string_composite()
-                )
-            }
-        }
-    }
-
-    pub fn to_string_time_range(&self) -> String {
-        if let Some(end) = self.end {
-            format!("{} - {}", self.start.to_string(), end.to_string())
+        let time_range = if let Some(end) = self.time_end {
+            format!("{} - {}", self.time_start.to_string(), end.to_string())
         } else {
-            format!("{} - {}", self.start.to_string(), "[now]")
-        }
+            format!("{} - {}", self.time_start.to_string(), "[now]")
+        };
+
+        format!(
+            "{} [{}] - [{}]",
+            time_range,
+            self.duration().to_string_composite(),
+            self.name,
+        )
     }
 
     pub fn duration(&self) -> TimeDuration {
-        if let Some(end) = self.end {
-            end - self.start
+        if let Some(end) = self.time_end {
+            end - self.time_start
         } else {
-            Local::now().to_timestamp() - self.start
+            Local::now().to_timestamp() - self.time_start
         }
     }
 }
 
 #[derive(Debug, Clone)]
 enum StampEvent {
-    CheckIn(TimeStamp),
-    CheckOut(TimeStamp),
-    // TaskStart(Local, String),
-    // TaskEnd(Local, String),
+    Begin(TimeStamp, String),
+    Leave(TimeStamp),
 }
 
 impl StampEvent {
     fn timestamp(&self) -> TimeStamp {
         match self {
-            StampEvent::CheckIn(timestamp) => *timestamp,
-            StampEvent::CheckOut(timestamp) => *timestamp,
+            StampEvent::Begin(timestamp, _) => *timestamp,
+            StampEvent::Leave(timestamp) => *timestamp,
         }
     }
 
     fn to_string(&self) -> String {
         match self {
-            StampEvent::CheckIn(timestamp) => format!("{} - CheckIn", timestamp.to_string()),
-            StampEvent::CheckOut(timestamp) => format!("{} - CheckOut", timestamp.to_string()),
+            StampEvent::Begin(timestamp, name) => {
+                format!("{} - Begin [{}]", timestamp.to_string(), name)
+            }
+            StampEvent::Leave(timestamp) => format!("{} - Leave", timestamp.to_string()),
         }
     }
 
     fn from_string(input: &str) -> StampEvent {
-        let delimiter_pos = input
-            .find('-')
-            .unwrap_or_else(|| panic!("The string '{}' is not a valid stamp event", input));
-
-        let (left, right) = input.split_at(delimiter_pos);
-        let timestamp = TimeStamp::from_string(left.trim());
-        let right_replaced = right.to_owned().replace("-", "");
-        let right_trimmed = right_replaced.trim();
-        let right = right_trimmed;
-
-        if right.starts_with("CheckIn") {
-            return StampEvent::CheckIn(timestamp);
+        let re_begin = regex::Regex::new(r"(\d{2}:\d{2}) - Begin (\[.+\])").unwrap();
+        for capture in re_begin.captures_iter(input) {
+            let timestamp = TimeStamp::from_string(&capture[1]);
+            let activity_name = capture[2]
+                .strip_prefix("[")
+                .unwrap()
+                .strip_suffix("]")
+                .unwrap()
+                .to_owned();
+            return StampEvent::Begin(timestamp, activity_name);
         }
-        if right.starts_with("CheckOut") {
-            return StampEvent::CheckOut(timestamp);
+
+        let re_leave = regex::Regex::new(r"(\d{2}:\d{2}) - Leave").unwrap();
+        for capture in re_leave.captures_iter(input) {
+            let timestamp = TimeStamp::from_string(&capture[1]);
+            return StampEvent::Leave(timestamp);
         }
 
         panic!("The string '{}' is not a valid stamp event", input)

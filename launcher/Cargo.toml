@@ -14,4 +14,5 @@ ct_lib_core = { path = "../cottontail/ct_lib_core"}
 
 crossterm = "0.19.0"
 chrono = "0.4.19"
+regex = "1.4.3"
 
