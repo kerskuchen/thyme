@@ -335,11 +335,15 @@ fn create_main_screen(
         }
     }
 
-    writeln!(result, "\n================================================").unwrap();
+    writeln!(
+        result,
+        "\n================================================="
+    )
+    .unwrap();
 
     writeln!(result, "{}", &write_durations_summary(day_entry)).unwrap();
 
-    writeln!(result, "================================================").unwrap();
+    writeln!(result, "=================================================").unwrap();
 
     if day_entry.is_currently_working() {
         writeln!(result, "(1) Take a break",).unwrap();
@@ -445,7 +449,7 @@ impl DayEntry {
         let datetime_today = Local::now();
         let filepath_today = DayEntry::database_filepath_for_date(datetime_today);
 
-        if path_exists(&filepath_today) {
+        let result = if path_exists(&filepath_today) {
             let content = std::fs::read_to_string(&filepath_today)
                 .unwrap_or_else(|error| panic!("Could not read '{}' - {}", &filepath_today, error));
 
@@ -470,9 +474,10 @@ impl DayEntry {
                 }],
                 datetime: datetime_today,
             };
-            result.write_back();
             result
-        }
+        };
+        result.write_back();
+        result
     }
 
     fn write_back(&self) {
