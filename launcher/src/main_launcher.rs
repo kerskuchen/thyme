@@ -4,7 +4,7 @@ use crossterm::{
     event::{KeyCode, KeyEvent, KeyModifiers},
     style::Print,
     terminal::{DisableLineWrap, EnableLineWrap, SetTitle},
-    ExecutableCommand,
+    ExecutableCommand, QueueableCommand,
 };
 
 use ct_lib_core::{path_exists, path_without_filename};
@@ -86,30 +86,46 @@ fn main() -> crossterm::Result<()> {
             terminal_height,
         );
 
-        stdout
-            .execute(cursor::MoveTo(0, 0))?
-            //.execute(Clear(ClearType::All))? // This just scrolls down on Windows and looks glitchy
-            .execute(Print(&clear_screen))?
-            .execute(cursor::MoveTo(0, 0))?
-            .execute(Print(&sprite_screen))?
-            .execute(cursor::MoveTo(0, 0))?
-            .execute(Print(&main_screen))?
-            .execute(cursor::MoveTo(0, 0))?;
-
-        let title = if let Some(current_activity) = day_entry.get_current_activity() {
-            format!(
-                "{} - {}",
-                current_activity.duration().to_string(),
-                if current_activity.is_work {
-                    "Working"
+        let title = {
+            let separator = if Local::now().second() % 2 == 0 {
+                ":"
+            } else {
+                " "
+            };
+            if day_entry.get_current_activity().is_some() {
+                if day_entry.is_currently_working() {
+                    format!(
+                        "{} - {}",
+                        day_entry
+                            .get_work_duration_total()
+                            .to_string_with_separator(separator),
+                        "Work total",
+                    )
                 } else {
-                    "Break"
-                },
-            )
-        } else {
-            format!("Left")
+                    format!(
+                        "{} - {}",
+                        day_entry
+                            .get_non_work_duration()
+                            .to_string_with_separator(separator),
+                        "Break total"
+                    )
+                }
+            } else {
+                format!("Not Checked in today")
+            }
         };
-        stdout.execute(SetTitle(&title))?;
+
+        use std::io::Write;
+        stdout
+            .queue(SetTitle(&title))?
+            .queue(cursor::MoveTo(0, 0))?
+            //.queue(Clear(ClearType::All))? // This just scrolls down on Windows and looks glitchy
+            .queue(Print(&clear_screen))?
+            .queue(cursor::MoveTo(0, 0))?
+            .queue(Print(&sprite_screen))?
+            .queue(cursor::MoveTo(0, 0))?
+            .queue(Print(&main_screen))?;
+        stdout.flush()?;
 
         // Using `poll` for non-blocking read
         if crossterm::event::poll(std::time::Duration::from_millis(1000))? {
@@ -302,7 +318,7 @@ fn create_main_screen(
 
         writeln!(
             result,
-            "You are working on since {} [{}]",
+            "You are working since {} [{}]",
             start_time.to_string(),
             duration.to_string_composite(),
         )
@@ -346,6 +362,12 @@ fn create_main_screen(
         .unwrap();
     }
 
+    write!(
+        result,
+        "\nPlease select what you want to do with numbers (1-9): ",
+    )
+    .unwrap();
+
     result
 }
 
@@ -361,30 +383,40 @@ fn write_durations_summary(day_entry: &DayEntry) -> String {
     let work_percent_non_project = 100 - work_percent_projects;
     writeln!(
         result,
-        "Total work duration:        {} (100%)",
+        "Total work duration:         {} (100%)",
         work_duration_total.to_string_composite(),
     )
     .unwrap();
     writeln!(
         result,
-        "  - Project activities:     {} ({: >3}%)",
+        "  - Project activities:      {} ({: >3}%)",
         work_duration_projects.to_string_composite(),
         work_percent_projects
     )
     .unwrap();
     writeln!(
         result,
-        "  - Non-Project activities: {} ({: >3}%)",
+        "  - Non-Project activities:  {} ({: >3}%)",
         work_duration_non_project.to_string_composite(),
         work_percent_non_project
     )
     .unwrap();
     writeln!(
         result,
-        "Total break duration:       {}",
+        "Total break duration:        {}",
         day_entry.get_break_duration().to_string_composite(),
     )
     .unwrap();
+    if day_entry.get_leave_duration().minutes > 0 {
+        writeln!(
+            result,
+            "Time since last leave:       {}",
+            day_entry.get_leave_duration().to_string_composite(),
+        )
+        .unwrap();
+    } else {
+        writeln!(result, "").unwrap();
+    }
 
     result
 }
@@ -621,6 +653,25 @@ impl DayEntry {
             .iter()
             .filter(|activity| !activity.is_work)
             .filter(|activity| activity.time_end.is_some())
+            .fold(TimeDuration::zero(), |acc, activity| {
+                acc + activity.duration()
+            })
+    }
+
+    fn get_leave_duration(&self) -> TimeDuration {
+        self.activities
+            .iter()
+            .filter(|activity| !activity.is_work)
+            .filter(|activity| activity.time_end.is_none())
+            .fold(TimeDuration::zero(), |acc, activity| {
+                acc + activity.duration()
+            })
+    }
+
+    fn get_non_work_duration(&self) -> TimeDuration {
+        self.activities
+            .iter()
+            .filter(|activity| !activity.is_work)
             .fold(TimeDuration::zero(), |acc, activity| {
                 acc + activity.duration()
             })
@@ -919,6 +970,10 @@ impl TimeStamp {
     pub fn to_string(&self) -> String {
         format!("{:02}:{:02}", self.hours, self.minutes)
     }
+
+    pub fn to_string_with_separator(&self, separator: &str) -> String {
+        format!("{:02}{}{:02}", self.hours, separator, self.minutes)
+    }
 }
 
 use std::ops::Add;
@@ -965,6 +1020,18 @@ impl TimeDuration {
                 self.minutes.abs() as u32 % 60
             )
             .to_string()
+        )
+    }
+
+    pub fn to_string_with_separator(&self, separator: &str) -> String {
+        format!(
+            "{}{}",
+            if self.minutes < 0 { "-" } else { "" },
+            TimeStamp::new(
+                self.minutes.abs() as u32 / 60,
+                self.minutes.abs() as u32 % 60
+            )
+            .to_string_with_separator(separator)
         )
     }
 
