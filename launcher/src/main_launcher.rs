@@ -268,8 +268,8 @@ fn create_clear_screen(terminal_width: usize, terminal_height: usize) -> String 
 fn create_main_screen(
     day_entry: &DayEntry,
     project_list: &[String],
-    terminal_width: usize,
-    terminal_heigth: usize,
+    _terminal_width: usize,
+    _terminal_heigth: usize,
 ) -> String {
     let mut result = String::new();
 
@@ -797,15 +797,10 @@ impl DayEntry {
 }
 
 trait DateTimeHelper {
-    fn to_date(&self) -> Date;
     fn to_timestamp(&self) -> TimeStamp;
 }
 
 impl DateTimeHelper for DateTime<Local> {
-    fn to_date(&self) -> Date {
-        Date::new(self.year() as u32, self.month(), self.day())
-    }
-
     fn to_timestamp(&self) -> TimeStamp {
         TimeStamp::new(self.hour(), self.minute())
     }
@@ -851,13 +846,6 @@ enum StampEvent {
 }
 
 impl StampEvent {
-    fn timestamp(&self) -> TimeStamp {
-        match self {
-            StampEvent::Begin(timestamp, _) => *timestamp,
-            StampEvent::Leave(timestamp) => *timestamp,
-        }
-    }
-
     fn to_string(&self) -> String {
         match self {
             StampEvent::Begin(timestamp, name) => {
@@ -887,76 +875,6 @@ impl StampEvent {
         }
 
         panic!("The string '{}' is not a valid stamp event", input)
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Ord, PartialOrd)]
-pub struct Date {
-    pub year: u32,
-    pub month: u32,
-    pub day: u32,
-}
-
-impl Date {
-    fn new(year: u32, month: u32, day: u32) -> Date {
-        assert!(0 < month && month <= 12);
-        assert!(0 < day && day <= 31);
-        Date { year, month, day }
-    }
-
-    fn to_string_ymd(&self, separator: &str) -> String {
-        format!(
-            "{}{}{:02}{}{:02}",
-            self.year, separator, self.month, separator, self.day
-        )
-    }
-
-    fn to_string_dmy(&self, separator: &str) -> String {
-        format!(
-            "{}{}{:02}{}{:02}",
-            self.day, separator, self.month, separator, self.year
-        )
-    }
-
-    fn from_string_ymd(input: &str) -> Date {
-        let separators = ["_", "-", "."];
-        for separator in &separators {
-            if input.contains(separator) {
-                let mut parts = input.split_terminator(separator);
-                let year = parts
-                    .next()
-                    .unwrap_or_else(|| panic!("The string '{}' is not a valid date", input))
-                    .parse()
-                    .unwrap_or_else(|error| {
-                        panic!("The string '{}' is not a valid date: {}", input, error)
-                    });
-
-                let month = parts
-                    .next()
-                    .unwrap_or_else(|| panic!("The string '{}' is not a valid date", input))
-                    .parse()
-                    .unwrap_or_else(|error| {
-                        panic!("The string '{}' is not a valid date: {}", input, error)
-                    });
-
-                let day = parts
-                    .next()
-                    .unwrap_or_else(|| panic!("The string '{}' is not a valid date", input))
-                    .parse()
-                    .unwrap_or_else(|error| {
-                        panic!("The string '{}' is not a valid date: {}", input, error)
-                    });
-
-                assert!(
-                    parts.next().is_none(),
-                    "The string '{}' is not a valid date",
-                    input
-                );
-
-                return Date::new(year, month, day);
-            }
-        }
-        panic!("The string '{}' is not a valid date", input)
     }
 }
 
