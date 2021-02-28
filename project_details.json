@@ -2,6 +2,7 @@
   "project_name": "thyme",
   "project_display_name": "Thyme",
   "project_company_name": "SnailSpaceGames",
+  "project_copyright_year": "2021",
   "windows_appdata_dir": "Thyme",
   "mobile_display_orientation": "portrait"
 }

@@ -19,15 +19,10 @@ fn main() -> crossterm::Result<()> {
     stdout.execute(DisableLineWrap)?;
 
     let mut previous_time = Local::now().to_timestamp();
-    let project_names_list = vec![
-        "project A - cool subtitle[aaa]".to_owned(),
-        "FL_23223 AHHHHH yers hahahaa,".to_owned(),
-        "Babanana keks [[]] noooW,".to_owned(),
-        "Good stuf [ yessss,".to_owned(),
-    ];
-
     let mut is_running = true;
     while is_running {
+        let project_names_list = reload_project_names();
+
         // Write changes every minute
         let current_time = Local::now().to_timestamp();
         if (current_time - previous_time).minutes > 0 {
@@ -129,9 +124,9 @@ fn main() -> crossterm::Result<()> {
                 _ => None,
             };
 
+            // Run an activity
             if let Some(selection) = selection {
                 assert!(selection != 0);
-
                 if selection == 1 {
                     if day_entry.is_currently_working() {
                         day_entry.start_activitiy(ACTIVITY_NAME_LEAVE, false);
@@ -164,6 +159,36 @@ fn main() -> crossterm::Result<()> {
     Ok(())
 }
 
+fn reload_project_names() -> Vec<String> {
+    const PROJECT_NAMES_FILEPATH: &str = "project_names.txt";
+    if !path_exists(PROJECT_NAMES_FILEPATH) {
+        let exampletext = format!(
+            "Welcome to Thyme! :)
+You can add your own project names here
+by modifying '{}'!
+Each project name will be its own line in '{}'.
+Currently only up to 8 project names are supported.
+Why not try out modifying '{}' now? 
+(You don't need to close Thyme for this)
+I will be waiting here",
+            PROJECT_NAMES_FILEPATH, PROJECT_NAMES_FILEPATH, PROJECT_NAMES_FILEPATH
+        );
+        std::fs::write(&PROJECT_NAMES_FILEPATH, &exampletext).unwrap_or_else(|error| {
+            panic!(
+                "Could not write to '{}' - {}",
+                &PROJECT_NAMES_FILEPATH, error
+            )
+        });
+    }
+
+    std::fs::read_to_string(PROJECT_NAMES_FILEPATH)
+        .unwrap_or_else(|error| panic!("Could not read '{}' - {}", &PROJECT_NAMES_FILEPATH, error))
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| line.to_owned())
+        .collect()
+}
+
 fn create_clear_screen(terminal_width: usize, terminal_heigth: usize) -> String {
     let mut result = String::new();
     for _line_index in 0..terminal_heigth {
@@ -185,7 +210,7 @@ fn create_main_screen(
 
     writeln!(
         result,
-        "Hello! Today is {}\n",
+        "Hello! Today is {}",
         day_entry.datetime.format("%A %e. %b (%d.%m.%Y)"),
     )
     .unwrap();
@@ -196,16 +221,29 @@ fn create_main_screen(
         writeln!(result, "You haven't checked in today!").unwrap();
     }
 
-    if let Some(current_activity) = day_entry.get_current_activity() {
-        if current_activity.is_work {
-            writeln!(
-                result,
-                "You are working since {} [{}]",
-                current_activity.time_start.to_string(),
-                current_activity.duration().to_string_composite(),
-            )
-            .unwrap();
-        } else {
+    if day_entry.is_currently_working() {
+        let last_work_activities = day_entry
+            .activities
+            .iter()
+            .rev()
+            .take_while(|activiy| activiy.is_work);
+
+        let duration = last_work_activities
+            .clone()
+            .fold(TimeDuration::zero(), |acc, activity| {
+                acc + activity.duration()
+            });
+        let start_time = last_work_activities.last().unwrap().time_start;
+
+        writeln!(
+            result,
+            "You are working on since {} [{}]",
+            start_time.to_string(),
+            duration.to_string_composite(),
+        )
+        .unwrap();
+    } else {
+        if let Some(current_activity) = day_entry.get_current_activity() {
             writeln!(
                 result,
                 "You are on break since {} [{}]",
@@ -227,7 +265,7 @@ fn create_main_screen(
     } else {
         writeln!(result, "(1) Begin work",).unwrap();
     }
-    for (index, project_name) in project_list.iter().enumerate() {
+    for (index, project_name) in project_list.iter().enumerate().take(8) {
         let is_active = day_entry
             .get_current_activity()
             .map(|activity| activity.name == *project_name)
@@ -393,15 +431,27 @@ impl DayEntry {
             .map(|activity| activity.name.clone())
             .collect();
 
-        for activity_name in activity_names {
-            let duration = self
-                .activities
-                .iter()
-                .filter(|activity| activity.name == activity_name)
-                .fold(TimeDuration::zero(), |acc, activity| {
-                    acc + activity.duration()
-                });
+        let mut activity_names_and_durations: Vec<_> = activity_names
+            .into_iter()
+            .map(|activity_name| {
+                let duration = self
+                    .activities
+                    .iter()
+                    .filter(|activity| activity.name == activity_name)
+                    .fold(TimeDuration::zero(), |acc, activity| {
+                        acc + activity.duration()
+                    });
 
+                (activity_name, duration)
+            })
+            .collect();
+
+        activity_names_and_durations.sort_by_key(|(_activity_name, duration)| {
+            // NOTE: This forces the sort to be descending
+            -duration.minutes
+        });
+
+        for (activity_name, duration) in activity_names_and_durations.into_iter() {
             writeln!(
                 result,
                 "{} - {}",
