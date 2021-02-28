@@ -11,6 +11,44 @@ use ct_lib_core::{path_exists, path_without_filename};
 
 use std::{collections::HashSet, fmt::Write};
 
+const SPRITE_WORKING: [&str; 2] = [
+    "................
+.....WWWWWW.....
+....W......W....
+...W..W.W...W...
+..W..........W..
+..W..........W..
+...W........W...
+....WWWWWWWW....",
+    "................
+................
+................
+.....WWWWWW.....
+...WW......WW...
+..W...W.W....W..
+.W............W.
+..WWWWWWWWWWWW..",
+];
+
+const SPRITE_BREAK: [&str; 2] = [
+    ".............ZZ.
+................
+............ZZ..
+.....ZZZZZZ.....
+...ZZ......ZZ...
+..Z.ZZZ.ZZZ..Z..
+.Z............Z.
+..ZZZZZZZZZZZZ..",
+    "................
+............ZZ..
+................
+....ZZZZZZZZ....
+..ZZ........ZZ..
+.Z..ZZZ.ZZZ...Z.
+Z..............Z
+.ZZZZZZZZZZZZZZ.",
+];
+
 fn main() -> crossterm::Result<()> {
     let mut day_entry = DayEntry::load_or_create();
 
@@ -40,6 +78,7 @@ fn main() -> crossterm::Result<()> {
         let terminal_height = (terminal_height.min(30) - 2) as usize;
 
         let clear_screen = create_clear_screen(terminal_width, terminal_height);
+        let sprite_screen = create_sprite_screen(&day_entry, terminal_width, terminal_height);
         let main_screen = create_main_screen(
             &day_entry,
             &project_names_list,
@@ -51,6 +90,8 @@ fn main() -> crossterm::Result<()> {
             .execute(cursor::MoveTo(0, 0))?
             //.execute(Clear(ClearType::All))? // This just scrolls down on Windows and looks glitchy
             .execute(Print(&clear_screen))?
+            .execute(cursor::MoveTo(0, 0))?
+            .execute(Print(&sprite_screen))?
             .execute(cursor::MoveTo(0, 0))?
             .execute(Print(&main_screen))?
             .execute(cursor::MoveTo(0, 0))?;
@@ -188,10 +229,34 @@ I will be waiting here",
         .map(|line| line.to_owned())
         .collect()
 }
+fn create_sprite_screen(
+    day_entry: &DayEntry,
+    terminal_width: usize,
+    _terminal_height: usize,
+) -> String {
+    let sprite_index = (Local::now().second() % 2) as usize;
+    let sprite = if day_entry.is_currently_working() {
+        SPRITE_WORKING[sprite_index].to_owned()
+    } else {
+        SPRITE_BREAK[sprite_index].to_owned()
+    };
 
-fn create_clear_screen(terminal_width: usize, terminal_heigth: usize) -> String {
+    let sprite = sprite.replace(".", " ").replace("W", "@").replace("Z", "@");
+    let padding_left = terminal_width - (sprite.lines().next().unwrap().len() + 1);
+
     let mut result = String::new();
-    for _line_index in 0..terminal_heigth {
+    for line in sprite.lines() {
+        for _ in 0..padding_left {
+            write!(result, " ").unwrap();
+        }
+        writeln!(result, "{}", line).unwrap();
+    }
+    result
+}
+
+fn create_clear_screen(terminal_width: usize, terminal_height: usize) -> String {
+    let mut result = String::new();
+    for _line_index in 0..terminal_height {
         for _col_index in 0..terminal_width {
             write!(result, " ").unwrap();
         }
