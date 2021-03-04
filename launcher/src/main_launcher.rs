@@ -407,11 +407,11 @@ fn write_durations_summary(day_entry: &DayEntry) -> String {
         day_entry.get_break_duration().to_string(),
     )
     .unwrap();
-    if day_entry.get_leave_duration().minutes > 0 {
+    if let Some(leave_duration) = day_entry.get_leave_duration() {
         writeln!(
             result,
-            "Time since last leave:       {}",
-            day_entry.get_leave_duration().to_string(),
+            "Time since last leave:       {} (Don't forget to log your hours!)",
+            leave_duration.to_string(),
         )
         .unwrap();
     } else {
@@ -653,14 +653,23 @@ impl DayEntry {
             })
     }
 
-    fn get_leave_duration(&self) -> TimeDuration {
-        self.activities
-            .iter()
-            .filter(|activity| !activity.is_work)
-            .filter(|activity| activity.time_end.is_none())
-            .fold(TimeDuration::zero(), |acc, activity| {
-                acc + activity.duration()
-            })
+    fn get_leave_duration(&self) -> Option<TimeDuration> {
+        if self.get_current_activity().is_none() {
+            return None;
+        }
+        if self.is_currently_working() {
+            None
+        } else {
+            Some(
+                self.activities
+                    .iter()
+                    .filter(|activity| !activity.is_work)
+                    .filter(|activity| activity.time_end.is_none())
+                    .fold(TimeDuration::zero(), |acc, activity| {
+                        acc + activity.duration()
+                    }),
+            )
+        }
     }
 
     fn get_non_work_duration(&self) -> TimeDuration {
