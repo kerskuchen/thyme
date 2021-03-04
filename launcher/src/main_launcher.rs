@@ -87,26 +87,22 @@ fn main() -> crossterm::Result<()> {
         );
 
         let title = {
-            let separator = if Local::now().second() % 2 == 0 {
-                ":"
-            } else {
-                " "
-            };
+            let blink = Local::now().second() % 2 == 0;
             if day_entry.get_current_activity().is_some() {
                 if day_entry.is_currently_working() {
                     format!(
-                        "{} - {}",
+                        "{} {}",
                         day_entry
                             .get_work_duration_total()
-                            .to_string_with_separator(separator),
+                            .to_string_blinking_shortened(blink),
                         "Work total",
                     )
                 } else {
                     format!(
-                        "{} - {}",
+                        "{} {}",
                         day_entry
                             .get_non_work_duration()
-                            .to_string_with_separator(separator),
+                            .to_string_blinking_shortened(blink),
                         "Break total"
                     )
                 }
@@ -320,7 +316,7 @@ fn create_main_screen(
             result,
             "You are working since {} [{}]",
             start_time.to_string(),
-            duration.to_string_composite(),
+            duration.to_string(),
         )
         .unwrap();
     } else {
@@ -329,7 +325,7 @@ fn create_main_screen(
                 result,
                 "You are on break since {} [{}]",
                 current_activity.time_start.to_string(),
-                current_activity.duration().to_string_composite(),
+                current_activity.duration().to_string(),
             )
             .unwrap();
         }
@@ -388,34 +384,34 @@ fn write_durations_summary(day_entry: &DayEntry) -> String {
     writeln!(
         result,
         "Total work duration:         {} (100%)",
-        work_duration_total.to_string_composite(),
+        work_duration_total.to_string(),
     )
     .unwrap();
     writeln!(
         result,
         "  - Project activities:      {} ({: >3}%)",
-        work_duration_projects.to_string_composite(),
+        work_duration_projects.to_string(),
         work_percent_projects
     )
     .unwrap();
     writeln!(
         result,
         "  - Non-Project activities:  {} ({: >3}%)",
-        work_duration_non_project.to_string_composite(),
+        work_duration_non_project.to_string(),
         work_percent_non_project
     )
     .unwrap();
     writeln!(
         result,
         "Total break duration:        {}",
-        day_entry.get_break_duration().to_string_composite(),
+        day_entry.get_break_duration().to_string(),
     )
     .unwrap();
     if day_entry.get_leave_duration().minutes > 0 {
         writeln!(
             result,
             "Time since last leave:       {}",
-            day_entry.get_leave_duration().to_string_composite(),
+            day_entry.get_leave_duration().to_string(),
         )
         .unwrap();
     } else {
@@ -554,13 +550,7 @@ impl DayEntry {
         });
 
         for (activity_name, duration) in activity_names_and_durations.into_iter() {
-            writeln!(
-                result,
-                "{} - {}",
-                duration.to_string_composite(),
-                activity_name
-            )
-            .unwrap();
+            writeln!(result, "{} - {}", duration.to_string(), activity_name).unwrap();
         }
 
         // Totals summary
@@ -881,7 +871,7 @@ impl Activity {
         format!(
             "{} [{}] - [{}]",
             time_range,
-            self.duration().to_string_composite(),
+            self.duration().to_string(),
             self.name,
         )
     }
@@ -975,10 +965,6 @@ impl TimeStamp {
     pub fn to_string(&self) -> String {
         format!("{:02}:{:02}", self.hours, self.minutes)
     }
-
-    pub fn to_string_with_separator(&self, separator: &str) -> String {
-        format!("{:02}{}{:02}", self.hours, separator, self.minutes)
-    }
 }
 
 use std::ops::Add;
@@ -1018,7 +1004,7 @@ impl TimeDuration {
 
     pub fn to_string(&self) -> String {
         format!(
-            "{}{}",
+            "{}{}h",
             if self.minutes < 0 { "-" } else { "" },
             TimeStamp::new(
                 self.minutes.abs() as u32 / 60,
@@ -1028,28 +1014,27 @@ impl TimeDuration {
         )
     }
 
-    pub fn to_string_with_separator(&self, separator: &str) -> String {
-        format!(
-            "{}{}",
-            if self.minutes < 0 { "-" } else { "" },
-            TimeStamp::new(
-                self.minutes.abs() as u32 / 60,
-                self.minutes.abs() as u32 % 60
+    pub fn to_string_blinking_shortened(&self, blink: bool) -> String {
+        let hours = self.minutes.abs() as u32 / 60;
+        let minutes = self.minutes.abs() as u32 % 60;
+
+        let separator = if blink { ":" } else { " " };
+        if hours == 0 {
+            format!(
+                "{}{}{}m",
+                if self.minutes < 0 { "-" } else { "" },
+                separator,
+                minutes,
             )
-            .to_string_with_separator(separator)
-        )
-    }
-
-    pub fn to_string_hour_fraction(&self) -> String {
-        format!(
-            "{}{:2.2}",
-            if self.minutes < 0 { "-" } else { "" },
-            self.minutes.abs() as f32 / 60.0
-        )
-    }
-
-    pub fn to_string_composite(&self) -> String {
-        format!("{} ({}h)", self.to_string(), self.to_string_hour_fraction())
+        } else {
+            format!(
+                "{}{}{}{:02}h",
+                if self.minutes < 0 { "-" } else { "" },
+                hours,
+                separator,
+                minutes
+            )
+        }
     }
 }
 
