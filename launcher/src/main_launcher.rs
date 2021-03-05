@@ -455,6 +455,24 @@ impl DayEntry {
                 .map(|line| StampEvent::from_string(line))
                 .collect();
 
+            // Check if stamps are in correct order
+            stamp_events.iter().fold(
+                TimeStamp {
+                    hours: 0,
+                    minutes: 0,
+                },
+                |previous, event| {
+                    let timestamp = event.timestamp();
+                    assert!(
+                        previous < timestamp,
+                        "Found stamp event '{}' that begins earlier than previous event in list at {}",
+                        event.to_string(),
+                        previous.to_string()
+                    );
+                    timestamp
+                },
+            );
+
             let activities = DayEntry::create_activities_from_stamp_events(&stamp_events);
             DayEntry {
                 datetime: datetime_today,
@@ -901,6 +919,13 @@ enum StampEvent {
 }
 
 impl StampEvent {
+    fn timestamp(&self) -> TimeStamp {
+        match self {
+            StampEvent::Begin(timestamp, _name) => timestamp.clone(),
+            StampEvent::Leave(timestamp) => timestamp.clone(),
+        }
+    }
+
     fn to_string(&self) -> String {
         match self {
             StampEvent::Begin(timestamp, name) => {
