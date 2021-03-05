@@ -59,7 +59,7 @@ fn main() -> crossterm::Result<()> {
     let mut previous_time = Local::now().to_timestamp();
     let mut is_running = true;
     while is_running {
-        let project_names_list = reload_project_names();
+        let activity_names_list = reload_activity_names();
 
         // Write changes every minute
         let current_time = Local::now().to_timestamp();
@@ -81,7 +81,7 @@ fn main() -> crossterm::Result<()> {
         let sprite_screen = create_sprite_screen(&day_entry, terminal_width, terminal_height);
         let main_screen = create_main_screen(
             &day_entry,
-            &project_names_list,
+            &activity_names_list,
             terminal_width,
             terminal_height,
         );
@@ -187,21 +187,21 @@ fn main() -> crossterm::Result<()> {
                     if day_entry.is_currently_working() {
                         day_entry.start_activitiy(ACTIVITY_NAME_LEAVE, false);
                     } else {
-                        day_entry.start_activitiy(ACTIVITY_NAME_NON_PROJECT_WORK, true);
+                        day_entry.start_activitiy(ACTIVITY_NAME_NON_SPECIFIC_WORK, true);
                     }
                 } else {
                     let index = selection - 1;
-                    if index < project_names_list.len() {
-                        let project_name = &project_names_list[index];
+                    if index < activity_names_list.len() {
+                        let activity_name = &activity_names_list[index];
                         let is_active = day_entry
                             .get_current_activity()
-                            .map(|activity| activity.name == *project_name)
+                            .map(|activity| activity.name == *activity_name)
                             .unwrap_or(false);
 
                         if is_active {
-                            day_entry.start_activitiy(ACTIVITY_NAME_NON_PROJECT_WORK, true);
+                            day_entry.start_activitiy(ACTIVITY_NAME_NON_SPECIFIC_WORK, true);
                         } else {
-                            day_entry.start_activitiy(project_name, true);
+                            day_entry.start_activitiy(activity_name, true);
                         }
                     }
                 }
@@ -215,35 +215,51 @@ fn main() -> crossterm::Result<()> {
     Ok(())
 }
 
-fn reload_project_names() -> Vec<String> {
-    const PROJECT_NAMES_FILEPATH: &str = "project_names.txt";
-    if !path_exists(PROJECT_NAMES_FILEPATH) {
+fn reload_activity_names() -> Vec<String> {
+    const ACTIVITY_NAMES_FILEPATH: &str = "activity_names.txt";
+
+    // Auto-rename old project names file name
+    if path_exists("project_names.txt") {
+        std::fs::rename("project_names.txt", ACTIVITY_NAMES_FILEPATH)
+            .expect("Could not rename old 'project_names.txt' to 'activity_names.txt'");
+    }
+
+    if !path_exists(ACTIVITY_NAMES_FILEPATH) {
         let exampletext = format!(
             "Welcome to Thyme! :)
-You can add your own project names here
+You can add your own activity names here
 by modifying '{}'!
-Each project name will be its own line in '{}'.
-Currently only up to 8 project names are supported.
+Each activity name will be its own line in '{}'.
+Currently only up to 9 activity names are supported.
 Why not try out modifying '{}' now? 
 (You don't need to close Thyme for this)
 I will be waiting here",
-            PROJECT_NAMES_FILEPATH, PROJECT_NAMES_FILEPATH, PROJECT_NAMES_FILEPATH
+            ACTIVITY_NAMES_FILEPATH, ACTIVITY_NAMES_FILEPATH, ACTIVITY_NAMES_FILEPATH
         );
-        std::fs::write(&PROJECT_NAMES_FILEPATH, &exampletext).unwrap_or_else(|error| {
+        std::fs::write(&ACTIVITY_NAMES_FILEPATH, &exampletext).unwrap_or_else(|error| {
             panic!(
                 "Could not write to '{}' - {}",
-                &PROJECT_NAMES_FILEPATH, error
+                &ACTIVITY_NAMES_FILEPATH, error
             )
         });
     }
 
-    std::fs::read_to_string(PROJECT_NAMES_FILEPATH)
-        .unwrap_or_else(|error| panic!("Could not read '{}' - {}", &PROJECT_NAMES_FILEPATH, error))
+    std::fs::read_to_string(ACTIVITY_NAMES_FILEPATH)
+        .unwrap_or_else(|error| panic!("Could not read '{}' - {}", &ACTIVITY_NAMES_FILEPATH, error))
         .lines()
         .filter(|line| !line.is_empty())
+        .map(|line| {
+            assert!(
+                line.len() <= 70,
+                "Activity name '{}' is too long please make it shorter than 70 character",
+                line
+            );
+            line
+        })
         .map(|line| line.to_owned())
         .collect()
 }
+
 fn create_sprite_screen(
     day_entry: &DayEntry,
     terminal_width: usize,
@@ -282,15 +298,15 @@ fn create_clear_screen(terminal_width: usize, terminal_height: usize) -> String 
 
 fn create_main_screen(
     day_entry: &DayEntry,
-    project_list: &[String],
+    activity_names_list: &[String],
     _terminal_width: usize,
     _terminal_heigth: usize,
 ) -> String {
     let mut result = String::new();
 
-    writeln!(
+    write!(
         result,
-        "Hello! Today is {}",
+        "Today is {}. ",
         day_entry.datetime.format("%A %e. %b (%d.%m.%Y)"),
     )
     .unwrap();
@@ -317,7 +333,8 @@ fn create_main_screen(
 
         writeln!(
             result,
-            "You are working since {} [{}]",
+            "You are working on [{}] since {} [{}]",
+            day_entry.get_current_activity().unwrap().name,
             start_time.to_string(),
             duration.to_string(),
         )
@@ -349,10 +366,10 @@ fn create_main_screen(
     } else {
         writeln!(result, "(x) Begin work",).unwrap();
     }
-    for (index, project_name) in project_list.iter().enumerate().take(8) {
+    for (index, activity_name) in activity_names_list.iter().enumerate().take(8) {
         let is_active = day_entry
             .get_current_activity()
-            .map(|activity| activity.name == *project_name)
+            .map(|activity| activity.name == *activity_name)
             .unwrap_or(false);
 
         writeln!(
@@ -360,7 +377,7 @@ fn create_main_screen(
             "({}) {} [{}]",
             index + 1,
             if is_active { "Stop " } else { "Begin" },
-            project_name
+            activity_name
         )
         .unwrap();
     }
@@ -378,12 +395,12 @@ fn write_durations_summary(day_entry: &DayEntry) -> String {
     let mut result = String::new();
 
     let work_duration_total = day_entry.get_work_duration_total();
-    let work_duration_projects = day_entry.get_work_duration_projects();
-    let work_duration_non_project = day_entry.get_work_duration_non_project();
-    let work_percent_projects = (100.0
-        * (work_duration_projects.minutes as f32 / work_duration_total.minutes as f32))
+    let work_duration_activities = day_entry.get_work_duration_specific();
+    let work_duration_non_specific = day_entry.get_work_duration_non_specific();
+    let work_percent_specific = (100.0
+        * (work_duration_activities.minutes as f32 / work_duration_total.minutes as f32))
         .round() as usize;
-    let work_percent_non_project = 100 - work_percent_projects;
+    let work_percent_non_specific = 100 - work_percent_specific;
     writeln!(
         result,
         "Total work duration:         {} (100%)",
@@ -392,16 +409,16 @@ fn write_durations_summary(day_entry: &DayEntry) -> String {
     .unwrap();
     writeln!(
         result,
-        "  - Project activities:      {} ({: >3}%)",
-        work_duration_projects.to_string(),
-        work_percent_projects
+        "  - Specific activities:     {} ({: >3}%)",
+        work_duration_activities.to_string(),
+        work_percent_specific
     )
     .unwrap();
     writeln!(
         result,
-        "  - Non-Project activities:  {} ({: >3}%)",
-        work_duration_non_project.to_string(),
-        work_percent_non_project
+        "  - Non-specific activities: {} ({: >3}%)",
+        work_duration_non_specific.to_string(),
+        work_percent_non_specific
     )
     .unwrap();
     writeln!(
@@ -424,7 +441,7 @@ fn write_durations_summary(day_entry: &DayEntry) -> String {
     result
 }
 
-const ACTIVITY_NAME_NON_PROJECT_WORK: &str = "Work (Non-Project)";
+const ACTIVITY_NAME_NON_SPECIFIC_WORK: &str = "Work (Non-specific)";
 const ACTIVITY_NAME_LEAVE: &str = "Leave";
 const ACTIVITY_NAME_BREAK: &str = "Break";
 
@@ -485,7 +502,7 @@ impl DayEntry {
             let result = DayEntry {
                 activities: vec![Activity {
                     is_work: true,
-                    name: ACTIVITY_NAME_NON_PROJECT_WORK.to_owned(),
+                    name: ACTIVITY_NAME_NON_SPECIFIC_WORK.to_owned(),
                     time_start: datetime_today.to_timestamp(),
                     time_end: None,
                 }],
@@ -644,21 +661,21 @@ impl DayEntry {
             })
     }
 
-    fn get_work_duration_projects(&self) -> TimeDuration {
+    fn get_work_duration_specific(&self) -> TimeDuration {
         self.activities
             .iter()
             .filter(|activity| activity.is_work)
-            .filter(|activity| activity.name != ACTIVITY_NAME_NON_PROJECT_WORK)
+            .filter(|activity| activity.name != ACTIVITY_NAME_NON_SPECIFIC_WORK)
             .fold(TimeDuration::zero(), |acc, activity| {
                 acc + activity.duration()
             })
     }
 
-    fn get_work_duration_non_project(&self) -> TimeDuration {
+    fn get_work_duration_non_specific(&self) -> TimeDuration {
         self.activities
             .iter()
             .filter(|activity| activity.is_work)
-            .filter(|activity| activity.name == ACTIVITY_NAME_NON_PROJECT_WORK)
+            .filter(|activity| activity.name == ACTIVITY_NAME_NON_SPECIFIC_WORK)
             .fold(TimeDuration::zero(), |acc, activity| {
                 acc + activity.duration()
             })
