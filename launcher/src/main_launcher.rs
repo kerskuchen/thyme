@@ -162,6 +162,10 @@ fn main() -> crossterm::Result<()> {
                     code: KeyCode::Char('9'),
                     modifiers: KeyModifiers::NONE,
                 }) => Some(9),
+                crossterm::event::Event::Key(KeyEvent {
+                    code: KeyCode::Char('x'),
+                    modifiers: KeyModifiers::NONE,
+                }) => Some(0),
 
                 crossterm::event::Event::Key(KeyEvent {
                     code: KeyCode::Char('c'),
@@ -179,15 +183,14 @@ fn main() -> crossterm::Result<()> {
 
             // Run an activity
             if let Some(selection) = selection {
-                assert!(selection != 0);
-                if selection == 1 {
+                if selection == 0 {
                     if day_entry.is_currently_working() {
                         day_entry.start_activitiy(ACTIVITY_NAME_LEAVE, false);
                     } else {
                         day_entry.start_activitiy(ACTIVITY_NAME_NON_PROJECT_WORK, true);
                     }
                 } else {
-                    let index = selection - 2;
+                    let index = selection - 1;
                     if index < project_names_list.len() {
                         let project_name = &project_names_list[index];
                         let is_active = day_entry
@@ -342,9 +345,9 @@ fn create_main_screen(
     writeln!(result, "=================================================").unwrap();
 
     if day_entry.is_currently_working() {
-        writeln!(result, "(1) Take a break",).unwrap();
+        writeln!(result, "(x) Take a break",).unwrap();
     } else {
-        writeln!(result, "(1) Begin work",).unwrap();
+        writeln!(result, "(x) Begin work",).unwrap();
     }
     for (index, project_name) in project_list.iter().enumerate().take(8) {
         let is_active = day_entry
@@ -355,8 +358,8 @@ fn create_main_screen(
         writeln!(
             result,
             "({}) {} [{}]",
-            index + 2,
-            if is_active { "Stop" } else { "Begin" },
+            index + 1,
+            if is_active { "Stop " } else { "Begin" },
             project_name
         )
         .unwrap();
@@ -364,7 +367,7 @@ fn create_main_screen(
 
     write!(
         result,
-        "\nPlease select what you want to do with numbers (1-9): ",
+        "\nPlease select what you want to do with numbers (1-9) or (x): ",
     )
     .unwrap();
 
