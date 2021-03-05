@@ -306,13 +306,13 @@ fn create_main_screen(
 
     write!(
         result,
-        "Today is {}. ",
+        "Today is {} -- ",
         day_entry.datetime.format("%A %e. %b (%d.%m.%Y)"),
     )
     .unwrap();
 
     if let Some(checkin_time) = day_entry.first_checkin_time() {
-        writeln!(result, "You started today at {}", checkin_time.to_string()).unwrap();
+        writeln!(result, "You started at {}", checkin_time.to_string()).unwrap();
     } else {
         writeln!(result, "You haven't checked in today!").unwrap();
     }
@@ -362,9 +362,9 @@ fn create_main_screen(
     writeln!(result, "=================================================").unwrap();
 
     if day_entry.is_currently_working() {
-        writeln!(result, "(x) Take a break",).unwrap();
+        writeln!(result, "(x) Take a break\n",).unwrap();
     } else {
-        writeln!(result, "(x) Begin work",).unwrap();
+        writeln!(result, "<x> Begin work\n",).unwrap();
     }
     for (index, activity_name) in activity_names_list.iter().enumerate().take(8) {
         let is_active = day_entry
@@ -372,14 +372,25 @@ fn create_main_screen(
             .map(|activity| activity.name == *activity_name)
             .unwrap_or(false);
 
-        writeln!(
-            result,
-            "({}) {} [{}]",
-            index + 1,
-            if is_active { "Stop " } else { "Begin" },
-            activity_name
-        )
-        .unwrap();
+        if is_active {
+            writeln!(
+                result,
+                "<{}> {} [{}]",
+                index + 1,
+                if is_active { "Stop " } else { "Begin" },
+                activity_name
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                result,
+                "({}) {} [{}]",
+                index + 1,
+                if is_active { "Stop " } else { "Begin" },
+                activity_name
+            )
+            .unwrap();
+        }
     }
 
     write!(
@@ -403,34 +414,34 @@ fn write_durations_summary(day_entry: &DayEntry) -> String {
     let work_percent_non_specific = 100 - work_percent_specific;
     writeln!(
         result,
-        "Total work duration:         {} (100%)",
+        "Total work duration:            {} (100%)",
         work_duration_total.to_string(),
     )
     .unwrap();
     writeln!(
         result,
-        "  - Specific activities:     {} ({: >3}%)",
+        "  - Activities (from list):     {} ({: >3}%)",
         work_duration_activities.to_string(),
         work_percent_specific
     )
     .unwrap();
     writeln!(
         result,
-        "  - Non-specific activities: {} ({: >3}%)",
+        "  - Activities (non-specific):  {} ({: >3}%)",
         work_duration_non_specific.to_string(),
         work_percent_non_specific
     )
     .unwrap();
     writeln!(
         result,
-        "Total break duration:        {}",
+        "Total break duration:           {}",
         day_entry.get_break_duration().to_string(),
     )
     .unwrap();
     if let Some(leave_duration) = day_entry.get_leave_duration() {
         writeln!(
             result,
-            "Time since last leave:       {} (Don't forget to log your hours!)",
+            "Time since last leave:          {} (Don't forget to log your hours!)",
             leave_duration.to_string(),
         )
         .unwrap();
