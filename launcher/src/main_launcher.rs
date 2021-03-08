@@ -7,7 +7,7 @@ use crossterm::{
     ExecutableCommand, QueueableCommand,
 };
 
-use ct_lib_core::{path_exists, path_without_filename};
+use ct_lib_core::{panic_set_hook_wait_for_keypress, path_exists, path_without_filename};
 
 use std::{collections::HashSet, fmt::Write};
 
@@ -50,6 +50,8 @@ Z..............Z
 ];
 
 fn main() -> crossterm::Result<()> {
+    ct_lib_core::panic_set_hook_wait_for_keypress();
+
     let mut day_entry = DayEntry::load_or_create();
 
     let mut stdout = std::io::stdout();
@@ -251,7 +253,7 @@ I will be waiting here",
         .map(|line| {
             assert!(
                 line.len() <= 70,
-                "Activity name '{}' is too long please make it shorter than 70 character",
+                "Activity name [{}] is too long - please make it shorter than 70 character",
                 line
             );
             line
