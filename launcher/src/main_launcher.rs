@@ -262,7 +262,7 @@ I will be waiting here",
 
 fn create_sprite_screen(
     day_entry: &DayEntry,
-    terminal_width: usize,
+    _terminal_width: usize,
     _terminal_height: usize,
 ) -> String {
     let sprite_index = (Local::now().second() % 2) as usize;
@@ -273,9 +273,20 @@ fn create_sprite_screen(
     };
 
     let sprite = sprite.replace(".", " ").replace("W", "@").replace("Z", "@");
-    let padding_left = terminal_width - (sprite.lines().next().unwrap().len() + 1);
+    let padding_left = 55;
 
     let mut result = String::new();
+
+    writeln!(result, "\n").unwrap();
+    for _ in 0..padding_left {
+        write!(result, " ").unwrap();
+    }
+    if day_entry.get_leave_duration().is_some() {
+        writeln!(result, "(Don't forget to log your hours!)",).unwrap();
+    } else {
+        writeln!(result, "").unwrap();
+    }
+
     for line in sprite.lines() {
         for _ in 0..padding_left {
             write!(result, " ").unwrap();
@@ -317,38 +328,21 @@ fn create_main_screen(
         writeln!(result, "You haven't checked in today!").unwrap();
     }
 
-    if day_entry.is_currently_working() {
-        let last_work_activities = day_entry
-            .activities
-            .iter()
-            .rev()
-            .take_while(|activiy| activiy.is_work);
-
-        let duration = last_work_activities
-            .clone()
-            .fold(TimeDuration::zero(), |acc, activity| {
-                acc + activity.duration()
-            });
-        let start_time = last_work_activities.last().unwrap().time_start;
-
+    if let Some(current_activity) = day_entry.get_current_activity() {
         writeln!(
             result,
-            "You are working on [{}] since {} [{}]",
-            day_entry.get_current_activity().unwrap().name,
-            start_time.to_string(),
-            duration.to_string(),
+            "You are {} since {} [{}]",
+            if current_activity.is_work {
+                format!("doing [{}]", &current_activity.name)
+            } else {
+                "checked out".to_owned()
+            },
+            current_activity.time_start.to_string(),
+            current_activity.duration().to_string(),
         )
         .unwrap();
     } else {
-        if let Some(current_activity) = day_entry.get_current_activity() {
-            writeln!(
-                result,
-                "You are on break since {} [{}]",
-                current_activity.time_start.to_string(),
-                current_activity.duration().to_string(),
-            )
-            .unwrap();
-        }
+        writeln!(result, "").unwrap();
     }
 
     writeln!(
@@ -441,7 +435,7 @@ fn write_durations_summary(day_entry: &DayEntry) -> String {
     if let Some(leave_duration) = day_entry.get_leave_duration() {
         writeln!(
             result,
-            "Time since last leave:          {} (Don't forget to log your hours!)",
+            "Time since last leave:          {}",
             leave_duration.to_string(),
         )
         .unwrap();
