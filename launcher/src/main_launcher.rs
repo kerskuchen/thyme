@@ -246,7 +246,7 @@ I will be waiting here",
         });
     }
 
-    std::fs::read_to_string(ACTIVITY_NAMES_FILEPATH)
+    let actitivities: Vec<String> = std::fs::read_to_string(ACTIVITY_NAMES_FILEPATH)
         .unwrap_or_else(|error| panic!("Could not read '{}' - {}", &ACTIVITY_NAMES_FILEPATH, error))
         .lines()
         .filter(|line| !line.is_empty())
@@ -259,7 +259,13 @@ I will be waiting here",
             line
         })
         .map(|line| line.to_owned())
-        .collect()
+        .collect();
+
+    assert!(
+        actitivities.len() < 10,
+        "Activitiy list is too long, only up to 9 activities are supported"
+    );
+    actitivities
 }
 
 fn create_sprite_screen(
@@ -362,7 +368,7 @@ fn create_main_screen(
     } else {
         writeln!(result, "<x> Begin work\n",).unwrap();
     }
-    for (index, activity_name) in activity_names_list.iter().enumerate().take(8) {
+    for (index, activity_name) in activity_names_list.iter().enumerate().take(9) {
         let is_active = day_entry
             .get_current_activity()
             .map(|activity| activity.name == *activity_name)
