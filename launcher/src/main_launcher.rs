@@ -7,7 +7,9 @@ use crossterm::{
     ExecutableCommand, QueueableCommand,
 };
 
-use ct_lib_core::{panic_set_hook_wait_for_keypress, path_exists, path_without_filename};
+use ct_lib_core::{
+    indexmap::IndexMap, panic_set_hook_wait_for_keypress, path_exists, path_without_filename,
+};
 
 use std::{collections::HashSet, fmt::Write};
 
@@ -285,7 +287,7 @@ fn create_sprite_screen(
 
     let mut result = String::new();
 
-    writeln!(result, "\n").unwrap();
+    writeln!(result, "\n\n").unwrap();
     for _ in 0..padding_left {
         write!(result, " ").unwrap();
     }
@@ -355,49 +357,67 @@ fn create_main_screen(
 
     writeln!(
         result,
-        "\n================================================="
+        "\n=================================================\n"
     )
     .unwrap();
 
     writeln!(result, "{}", &write_durations_summary(day_entry)).unwrap();
 
-    writeln!(result, "=================================================").unwrap();
+    writeln!(
+        result,
+        "=================================================\n"
+    )
+    .unwrap();
 
     if day_entry.is_currently_working() {
         writeln!(result, "(x) Take a break\n",).unwrap();
     } else {
         writeln!(result, "<x> Begin work\n",).unwrap();
     }
+
+    let activity_durations = day_entry.get_activity_durations();
+    let mut lines = Vec::new();
     for (index, activity_name) in activity_names_list.iter().enumerate().take(9) {
         let is_active = day_entry
             .get_current_activity()
             .map(|activity| activity.name == *activity_name)
             .unwrap_or(false);
+        let duration = activity_durations
+            .get(activity_name)
+            .unwrap_or(&TimeDuration::zero())
+            .to_string();
+        lines.push((
+            duration,
+            if is_active {
+                format!("<{}> {} [{}]", index + 1, "Stop ", activity_name,)
+            } else {
+                format!("({}) {} [{}]", index + 1, "Begin", activity_name,)
+            },
+        ));
+    }
 
-        if is_active {
-            writeln!(
-                result,
-                "<{}> {} [{}]",
-                index + 1,
-                if is_active { "Stop " } else { "Begin" },
-                activity_name
-            )
-            .unwrap();
+    let max_line_len = lines
+        .iter()
+        .map(|(_activitiy_name, line)| line.len())
+        .max()
+        .unwrap_or(0);
+
+    for (duration, line) in lines.into_iter() {
+        let padding = 2 + max_line_len - line.len();
+        write!(result, "{}", line).unwrap();
+        for _ in 0..padding {
+            write!(result, ".").unwrap();
+        }
+        if line.contains("Stop") {
+            writeln!(result, "[{}] <-- working", duration).unwrap();
         } else {
-            writeln!(
-                result,
-                "({}) {} [{}]",
-                index + 1,
-                if is_active { "Stop " } else { "Begin" },
-                activity_name
-            )
-            .unwrap();
+            writeln!(result, "[{}]", duration).unwrap();
         }
     }
 
     write!(
         result,
-        "\nPlease select what you want to do with numbers (1-9) or (x): ",
+        "\nPlease select what you want to do by pressing numbers (1-9) or (x): ",
     )
     .unwrap();
 
@@ -573,34 +593,7 @@ impl DayEntry {
         writeln!(result, "\nActivity Durations:").unwrap();
         writeln!(result, "=====================\n").unwrap();
 
-        let activity_names: HashSet<String> = self
-            .activities
-            .iter()
-            .filter(|activity| activity.is_work)
-            .map(|activity| activity.name.clone())
-            .collect();
-
-        let mut activity_names_and_durations: Vec<_> = activity_names
-            .into_iter()
-            .map(|activity_name| {
-                let duration = self
-                    .activities
-                    .iter()
-                    .filter(|activity| activity.name == activity_name)
-                    .fold(TimeDuration::zero(), |acc, activity| {
-                        acc + activity.duration()
-                    });
-
-                (activity_name, duration)
-            })
-            .collect();
-
-        activity_names_and_durations.sort_by_key(|(_activity_name, duration)| {
-            // NOTE: This forces the sort to be descending
-            -duration.minutes
-        });
-
-        for (activity_name, duration) in activity_names_and_durations.into_iter() {
+        for (activity_name, duration) in self.get_activity_durations().into_iter() {
             writeln!(result, "{} - {}", duration.to_string(), activity_name).unwrap();
         }
 
@@ -730,6 +723,39 @@ impl DayEntry {
             .fold(TimeDuration::zero(), |acc, activity| {
                 acc + activity.duration()
             })
+    }
+
+    fn get_activity_durations(&self) -> IndexMap<String, TimeDuration> {
+        let activity_names: HashSet<String> = self
+            .activities
+            .iter()
+            .filter(|activity| activity.is_work)
+            .map(|activity| activity.name.clone())
+            .collect();
+
+        let mut activity_names_and_durations: IndexMap<String, TimeDuration> = activity_names
+            .into_iter()
+            .map(|activity_name| {
+                let duration = self
+                    .activities
+                    .iter()
+                    .filter(|activity| activity.name == activity_name)
+                    .fold(TimeDuration::zero(), |acc, activity| {
+                        acc + activity.duration()
+                    });
+
+                (activity_name, duration)
+            })
+            .collect();
+
+        activity_names_and_durations.sort_by(
+            |_activity_name_a, duration_a, _activity_name_b, duration_b| {
+                // NOTE: The negatives forces descending sorting
+                (-duration_a.minutes).cmp(&-duration_b.minutes)
+            },
+        );
+
+        activity_names_and_durations
     }
 
     fn create_activities_from_stamp_events(stamp_events: &[StampEvent]) -> Vec<Activity> {
