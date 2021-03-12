@@ -6,27 +6,32 @@ human readable textfiles for easy viewing and editing.
 
 ## Program interface:
 ```
-Hello! Today is Sunday 28. Feb (28.02.2021)
-You started today at 09:21
-You are working since 11:56 [00:27 (0.45h)]
-                                                                @@@@@@
-=================================================             @@      @@
-Total work duration:         01:11 (1.18h) (100%)            @   @ @    @
-  - Project activities:      00:40 (0.67h) ( 56%)           @            @
-  - Non-Project activities:  00:31 (0.52h) ( 44%)            @@@@@@@@@@@@
-Total break duration:        01:51 (1.85h)
-
+Today is Friday 12. Mar (12.03.2021) -- You started at 07:13
+You are doing [Watch online videos] since 20:12 [00:08h]
 
 =================================================
-(1) Take a break
-(2) Stop [Watch online videos]
-(3) Begin ["Bugfixing"]
-(4) Begin [Play with the cats]
-(5) Begin [Workout (go to the fridge)]
-(6) Begin [Build a sandcastle]
-(7) Begin [Other important thing]
 
-Please select what you want to do with numbers (1-9):
+Total work duration:            11:28h (100%)
+  - Activities (from list):     10:38h ( 93%)
+  - Activities (non-specific):  00:50h (  7%)               @@@@@@
+Total break duration:           01:39h                    @@      @@
+                                                         @   @ @    @
+                                                        @            @
+=================================================        @@@@@@@@@@@@
+
+(x) Take a break
+
+<1> Stop  [Watch online videos].....[01:00h] <-- working
+(2) Begin ["Bugfixing"].............[00:53h]
+(3) Begin [Play with the cats]......[01:30h]
+(4) Begin [Build a sandcastle]......[01:54h]
+(5) Begin [Jump around].............[00:21h]
+(6) Begin [Do the important thing]..[00:12h]
+(7) Begin [Eat bananas].............[02:17h]
+(8) Begin [Look out of the window]..[02:15h]
+(9) Begin [Walk in the park]........[00:16h]
+
+Please select what you want to do by pressing numbers (1-9) or (x):
 
 ```
 
@@ -42,28 +47,36 @@ corrections (`database/{your_date}.txt`) or adding/removing project names (`proj
 
 **Example stamp events file (`database/{your_date}.txt`):**
 ```
-09:21 - Begin [Work (Non-Project)]
-09:33 - Begin [Bugfixing]
-09:35 - Begin [Build a sandcastle]
-09:42 - Begin [Play with the cats]
-09:43 - Leave
-10:41 - Begin [Work (Non-Project)]
-11:00 - Leave
-11:10 - Begin [Workout]
-11:11 - Leave
-11:16 - Begin [Play with the cats]
-11:18 - Leave
-11:56 - Begin [Watch online videos]
+07:13 - Begin [Watch online videos]
+08:05 - Begin ["Bugfixing"]
+08:19 - Begin [Play with the cats]
+08:56 - Begin [Look out of the window]
+10:32 - Begin [Build a sandcastle]
+11:03 - Begin [Jump around]
+11:24 - Begin [Do the important thing]
+11:36 - Leave
+13:11 - Begin [Eat bananas]
+15:28 - Begin [Look out of the window]
+16:07 - Begin [Walk in the park]
+16:23 - Begin [Work (Non-specific)]
+17:13 - Begin [Play with the cats]
+18:06 - Leave
+18:10 - Begin [Build a sandcastle]
+19:33 - Begin ["Bugfixing"]
+20:12 - Begin [Watch online videos]
 ```
 
 **Example project list file (`project_names.txt`):**
 ```
 Watch online videos
-Bugfixing
+"Bugfixing"
 Play with the cats
-Workout
 Build a sandcastle
-Other important thing
+Jump around
+Do the important thing
+Eat bananas
+Look out of the window
+Walk in the park
 ```
 
 A daily report will be automatically generated and live updated to `today_report.txt` 
@@ -72,43 +85,54 @@ every minute (with a copy to `database/{your_date}__report.txt`) while Thyme is 
 **Example generated report file (`today__report.txt`):**
 
 ```
-Report for Sunday 28. Feb (28.02.2021)
+Report for Friday 12. Mar (12.03.2021)
 
 
 Activity Durations:
 =====================
 
-00:31 (0.52h) - Work (Non-Project)
-00:27 (0.45h) - Watch online videos
-00:07 (0.12h) - Build a sandcastle
-00:03 (0.05h) - Play with the cats
-00:02 (0.03h) - "Bugfixing"
-00:01 (0.02h) - Workout (go to the fridge)
+02:17h - Eat bananas
+02:15h - Look out of the window
+01:54h - Build a sandcastle
+01:30h - Play with the cats
+01:01h - Watch online videos
+00:53h - "Bugfixing"
+00:50h - Work (Non-specific)
+00:21h - Jump around
+00:16h - Walk in the park
+00:12h - Do the important thing
 
 -------------
 
-Total work duration:         01:11 (1.18h) (100%)
-  - Project activities:      00:40 (0.67h) ( 56%)
-  - Non-Project activities:  00:31 (0.52h) ( 44%)
-Total break duration:        01:51 (1.85h)
+Total work duration:            11:29h (100%)
+  - Activities (from list):     10:39h ( 93%)
+  - Activities (non-specific):  00:50h (  7%)
+Total break duration:           01:39h
 
 
 
 Detailed Activity List:
 =========================
 
-09:21 - 09:33 [00:12 (0.20h)] - [Work (Non-Project)]
-09:33 - 09:35 [00:02 (0.03h)] - ["Bugfixing"]
-09:35 - 09:42 [00:07 (0.12h)] - [Build a sandcastle]
-09:42 - 09:43 [00:01 (0.02h)] - [Play with the cats]
-09:43 - 10:41 [00:58 (0.97h)] - [Break]
-10:41 - 11:00 [00:19 (0.32h)] - [Work (Non-Project)]
-11:00 - 11:10 [00:10 (0.17h)] - [Break]
-11:10 - 11:11 [00:01 (0.02h)] - [Workout (go to the fridge)]
-11:11 - 11:16 [00:05 (0.08h)] - [Break]
-11:16 - 11:18 [00:02 (0.03h)] - [Play with the cats]
-11:18 - 11:56 [00:38 (0.63h)] - [Break]
-11:56 - <now> [00:27 (0.45h)] - [Watch online videos]
+07:13 - 08:05 [00:52h] - [Watch online videos]
+08:05 - 08:19 [00:14h] - ["Bugfixing"]
+08:19 - 08:56 [00:37h] - [Play with the cats]
+08:56 - 10:32 [01:36h] - [Look out of the window]
+10:32 - 11:03 [00:31h] - [Build a sandcastle]
+11:03 - 11:24 [00:21h] - [Jump around]
+11:24 - 11:36 [00:12h] - [Do the important thing]
+11:36 - 13:11 [01:35h] - [Break]
+13:11 - 15:28 [02:17h] - [Eat bananas]
+15:28 - 16:07 [00:39h] - [Look out of the window]
+16:07 - 16:23 [00:16h] - [Walk in the park]
+16:23 - 17:13 [00:50h] - [Work (Non-specific)]
+17:13 - 18:06 [00:53h] - [Play with the cats]
+18:06 - 18:10 [00:04h] - [Break]
+18:10 - 19:33 [01:23h] - [Build a sandcastle]
+19:33 - 20:12 [00:39h] - ["Bugfixing"]
+20:12 - <now> [00:09h] - [Watch online videos]
+
+
 ```
 
 
