@@ -127,6 +127,7 @@ impl DayEntry {
         let mut lines: Vec<String> = content
             .lines()
             .filter(|line| !line.is_empty())
+            .filter(|line| !line.starts_with("---"))
             .map(|line| line.to_owned())
             .collect();
         assert!(!lines.is_empty(), "Found empty timesheet at '{}'", filepath);
@@ -205,6 +206,7 @@ impl DayEntry {
         let mut result = String::new();
 
         writeln!(result, "{}", self.date.format(DATE_FORMAT_TIMESHEET)).unwrap();
+        writeln!(result, "------------------------\n").unwrap();
         let stamp_events = DayEntry::create_stamp_events_from_activities(&self.activities);
         for stamp_event in &stamp_events {
             writeln!(result, "{}", stamp_event.to_string()).unwrap();
