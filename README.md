@@ -42,10 +42,11 @@ Just place `thyme.exe` into a directory where it has write access to (preferably
 Launching it will create a `database` folder and a `project_names.txt` file where Thyme stores and
 reads its information.
 
-All files can be opened and edited with a simple text editor. This can be useful for time 
-corrections (`database/{your_date}.txt`) or adding/removing project names (`project_names.txt`).
+All files can be opened and edited with a simple text editor even while Tyhme is running. 
+This can be useful for quick time corrections in `today__timesheet.txt` or adding/removing 
+project names in `project_names.txt`.
 
-**Example stamp events file (`database/{your_date}.txt`):**
+**Example stamp events file (`today_timesheet.txt`):**
 ```
 07:13 - Begin [Watch online videos]
 08:05 - Begin ["Bugfixing"]
@@ -79,7 +80,7 @@ Look out of the window
 Walk in the park
 ```
 
-A daily report will be automatically generated and live updated to `today_report.txt` 
+A daily report will be automatically generated and live updated to `today__report.txt` 
 every minute (with a copy to `database/{your_date}__report.txt`) while Thyme is running.
 
 **Example generated report file (`today__report.txt`):**
