@@ -4,7 +4,7 @@ mod time;
 use dayentry::{
     write_durations_summary, DayEntry, ACTIVITY_NAME_LEAVE, ACTIVITY_NAME_NON_SPECIFIC_WORK,
 };
-use time::TimeDuration;
+use time::{DateTimeHelper, TimeDuration, TimeStamp};
 
 use ct_lib_core::path_exists;
 
@@ -28,6 +28,7 @@ fn main() -> crossterm::Result<()> {
     crossterm::terminal::enable_raw_mode()?;
     stdout.execute(DisableLineWrap)?;
 
+    let mut preferred_working_time = TimeDuration { minutes: 8 * 60 };
     let mut previous_time = time::get_current_datetime();
     let mut is_running = true;
     while is_running {
@@ -56,6 +57,7 @@ fn main() -> crossterm::Result<()> {
         let main_screen = create_main_screen(
             &day_entry,
             &activity_names_list,
+            preferred_working_time,
             terminal_width,
             terminal_height,
         );
@@ -140,6 +142,23 @@ fn main() -> crossterm::Result<()> {
                     code: KeyCode::Char('x'),
                     modifiers: KeyModifiers::NONE,
                 }) => Some(0),
+
+                crossterm::event::Event::Key(KeyEvent {
+                    code: KeyCode::Char('+'),
+                    modifiers: KeyModifiers::NONE,
+                }) => {
+                    preferred_working_time.minutes =
+                        i32::min(preferred_working_time.minutes + 1, 10 * 60);
+                    None
+                }
+                crossterm::event::Event::Key(KeyEvent {
+                    code: KeyCode::Char('-'),
+                    modifiers: KeyModifiers::NONE,
+                }) => {
+                    preferred_working_time.minutes =
+                        i32::max(preferred_working_time.minutes - 15, 4 * 60);
+                    None
+                }
 
                 crossterm::event::Event::Key(KeyEvent {
                     code: KeyCode::Char('c'),
@@ -297,7 +316,7 @@ Z..............Z
 
     let mut result = String::new();
 
-    writeln!(result, "\n\n").unwrap();
+    writeln!(result, "\n\n\n").unwrap();
     for _ in 0..padding_left {
         write!(result, " ").unwrap();
     }
@@ -330,6 +349,7 @@ fn create_clear_screen(terminal_width: usize, terminal_height: usize) -> String 
 fn create_main_screen(
     day_entry: &DayEntry,
     activity_names_list: &[String],
+    preferred_working_time: TimeDuration,
     _terminal_width: usize,
     _terminal_heigth: usize,
 ) -> String {
@@ -344,6 +364,41 @@ fn create_main_screen(
 
     if let Some(checkin_time) = day_entry.first_checkin_time() {
         writeln!(result, "You started at {}", checkin_time.to_string()).unwrap();
+        let time_left = day_entry.get_time_left_for_the_day(
+            preferred_working_time,
+            mandatory_break_time_for_working_time(preferred_working_time),
+        );
+
+        if time_left.minutes >= 0 {
+            let finished_time = {
+                let current_time = time::get_current_datetime().to_timestamp();
+                let mut hours = current_time.hours;
+                let mut minutes = current_time.minutes + time_left.minutes as u32;
+                while minutes >= 60 {
+                    minutes -= 60;
+                    hours += 1;
+                }
+                hours = hours % 24;
+
+                TimeStamp::new(hours, minutes)
+            };
+            writeln!(
+                result,
+                "For a preferred work time of {} you will be finished at {} ({} left)",
+                preferred_working_time.to_string(),
+                finished_time.to_string(),
+                time_left.to_string()
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                result,
+                "You already finished your preferred work time of {} with overtime of {}",
+                preferred_working_time.to_string(),
+                (TimeDuration::zero() - time_left).to_string()
+            )
+            .unwrap();
+        }
     } else {
         writeln!(result, "You haven't checked in today!").unwrap();
     }
@@ -425,6 +480,9 @@ fn create_main_screen(
         }
     }
 
+    writeln!(result, "").unwrap();
+    writeln!(result, "(+/-) Increase/decrease preferred work time").unwrap();
+
     write!(
         result,
         "\nPlease select what you want to do by pressing numbers (1-9) or (x): ",
@@ -432,4 +490,14 @@ fn create_main_screen(
     .unwrap();
 
     result
+}
+
+fn mandatory_break_time_for_working_time(working_time: TimeDuration) -> TimeDuration {
+    if working_time.minutes - (9 * 60) > 0 {
+        TimeDuration { minutes: 45 }
+    } else if working_time.minutes - (6 * 60) > 0 {
+        TimeDuration { minutes: 30 }
+    } else {
+        TimeDuration::zero()
+    }
 }

@@ -306,6 +306,23 @@ impl DayEntry {
         self.activities.first().map(|activity| activity.time_start)
     }
 
+    pub fn get_time_left_for_the_day(
+        &self,
+        target_work_duration: TimeDuration,
+        mandatory_break_time: TimeDuration,
+    ) -> TimeDuration {
+        let mandatory_break_time_left = TimeDuration {
+            minutes: i32::max(
+                0,
+                (mandatory_break_time
+                    - self.get_break_duration()
+                    - self.get_leave_duration().unwrap_or(TimeDuration::zero()))
+                .minutes,
+            ),
+        };
+        target_work_duration - self.get_work_duration_total() + mandatory_break_time_left
+    }
+
     pub fn get_work_duration_total(&self) -> TimeDuration {
         self.activities
             .iter()

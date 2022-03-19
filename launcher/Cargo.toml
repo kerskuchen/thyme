@@ -12,7 +12,7 @@ name = "launcher"
 [dependencies]
 ct_lib_core = { path = "../cottontail/ct_lib_core"}
 
-crossterm = "0.19.0"
+crossterm = "0.23.1"
 chrono = "0.4.19"
 regex = "1.4.3"
 
