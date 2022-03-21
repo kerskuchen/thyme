@@ -148,7 +148,7 @@ fn main() -> crossterm::Result<()> {
                     modifiers: KeyModifiers::NONE,
                 }) => {
                     preferred_working_time.minutes =
-                        i32::min(preferred_working_time.minutes + 1, 10 * 60);
+                        i32::min(preferred_working_time.minutes + 15, 10 * 60);
                     None
                 }
                 crossterm::event::Event::Key(KeyEvent {
